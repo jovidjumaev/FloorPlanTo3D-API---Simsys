@@ -60,7 +60,7 @@ python application.py
 
 These steps will prepare your environment for using the API. While the API can be accessed with any client, for a fully integrated experience, we recommend using our Unity application, located in the Unity directory (Unity engine installation required).
 
-## Customization Features (Our Unity Client)
+## Customization Features, download from this link [Our Unity Client](https://github.com/fadyazizz/FloorPlanTo3D-unityClient)
 
 Users are afforded a wide range of customization options for their 3D models, including but not limited to:
 
