@@ -19,13 +19,11 @@ FloorPlanTo3D is structured into two main parts:
 
 To set up and run the project, follow these steps:
 
-1.  **Clone the pre-trained model and API Repo from here**: [FloorPlanTo3D-API](https://github.com/matterport/Mask_RCNN).
+1.  **Clone this repo**:
 
 ```
-
-conda create --name imageTo3D python=3.6.13
-
-conda activate imageTo3D
+git clone https://github.com/fadyazizz/FloorPlanTo3D-API
+cd FloorPlanTo3D-API
 
 ```
 
