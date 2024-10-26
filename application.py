@@ -47,7 +47,7 @@ global cfg
 ROOT_DIR = os.path.abspath("./")
 WEIGHTS_FOLDER = "./weights"
 
-
+from flask_cors import CORS, cross_origin
 
 sys.path.append(ROOT_DIR)
 
@@ -55,6 +55,9 @@ MODEL_NAME = "mask_rcnn_hq"
 WEIGHTS_FILE_NAME = 'maskrcnn_15_epochs.h5'
 
 application=Flask(__name__)
+cors = CORS(application, resources={r"/*": {"origins": "*"}})
+
+
 class PredictionConfig(Config):
 	# define the name of the configuration
 	NAME = "floorPlan_cfg"
