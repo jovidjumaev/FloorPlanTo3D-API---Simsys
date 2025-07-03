@@ -84,4 +84,13 @@ curl -X POST -F "image=@floor_plan.png" http://localhost:8080/analyze_accuracy
 - **Geometric analysis** for door orientation inference
 - **Junction detection** using connectivity analysis
 
+### Important Notes
+
+**Measurements**: All measurements (wall thickness, length, distances) are in **pixels**, not real-world units. To convert to real measurements, you need:
+- Scale reference (e.g., "this wall is 10 feet")
+- Pixel-to-real-world conversion factor
+- Calibration process for your specific floor plan
+
+**Visualization Updates**: Recent improvements include door orientation arrows, confidence scores, and enhanced junction detection in wall analysis visualizations.
+
 This enhanced system provides professional-grade architectural analysis capabilities for floor plan interpretation and building parameter extraction.
