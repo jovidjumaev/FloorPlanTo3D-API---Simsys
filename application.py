@@ -212,6 +212,7 @@ def buildEnhancedJson(model_results, image_width, image_height, original_image):
 	
 	# Build enhanced object list
 	objects = []
+	door_objects = []
 	door_sizes = []
 	
 	for i in range(len(bboxes)):
@@ -255,7 +256,23 @@ def buildEnhancedJson(model_results, image_width, image_height, original_image):
 			obj_data["mask_analysis"] = encodeMaskSummary(mask)
 			obj_data["mask_analysis"]["shape"] = {"height": int(mask.shape[0]), "width": int(mask.shape[1])}
 		
+		# Collect door objects for enhanced analysis
+		if class_id == 3:  # door
+			door_objects.append(obj_data)
+		
 		objects.append(obj_data)
+	
+	# Enhance doors with orientation analysis
+	if door_objects:
+		door_masks = masks[:, :, [i for i, cid in enumerate(class_ids) if cid == 3]]
+		enhanced_doors = enhancedDoorAnalysis(door_objects, door_masks, image_width, image_height)
+		
+		# Replace door objects in main list with enhanced versions
+		door_index = 0
+		for i, obj in enumerate(objects):
+			if obj["type"] == "door":
+				objects[i] = enhanced_doors[door_index]
+				door_index += 1
 	
 	# Calculate statistics
 	average_door_size = sum(door_sizes) / len(door_sizes) if door_sizes else 0
@@ -456,6 +473,7 @@ def createVisualization(original_image, model_results, image_width, image_height
 	bboxes = model_results['rois']
 	class_ids = model_results['class_ids']
 	scores = model_results['scores']
+	masks = model_results.get('masks', None)
 	
 	for i in range(len(bboxes)):
 		bbox = bboxes[i]
@@ -471,8 +489,75 @@ def createVisualization(original_image, model_results, image_width, image_height
 		# Draw bounding box
 		draw.rectangle([x1, y1, x2, y2], outline=color, width=3)
 		
-		# Draw label with confidence
-		label = f"{class_names.get(class_id, 'Unknown')} ({confidence:.2f})"
+		# Enhanced door visualization with orientation
+		if class_id == 3 and masks is not None:  # door
+			door_mask = masks[:, :, i] if i < masks.shape[2] else None
+			orientation = analyzeDoorOrientation(door_mask, bbox, image_width, image_height)
+			
+			# Draw door orientation arrow
+			center_x = (x1 + x2) / 2
+			center_y = (y1 + y2) / 2
+			arrow_length = min((x2 - x1), (y2 - y1)) * 0.4
+			
+			# Determine arrow direction based on estimated swing
+			swing = orientation.get("estimated_swing", "")
+			arrow_color = (255, 255, 0)  # Yellow arrow
+			
+			if "upward" in swing:
+				arrow_end = (center_x, center_y - arrow_length)
+			elif "downward" in swing:
+				arrow_end = (center_x, center_y + arrow_length)
+			elif "leftward" in swing:
+				arrow_end = (center_x - arrow_length, center_y)
+			elif "rightward" in swing:
+				arrow_end = (center_x + arrow_length, center_y)
+			else:
+				arrow_end = (center_x, center_y)  # No arrow for unknown
+			
+			# Draw arrow line
+			if arrow_end != (center_x, center_y):
+				draw.line([(center_x, center_y), arrow_end], fill=arrow_color, width=3)
+				
+				# Draw arrow head (simple triangle)
+				head_size = 8
+				if "upward" in swing:
+					arrow_points = [
+						(arrow_end[0], arrow_end[1]),
+						(arrow_end[0] - head_size, arrow_end[1] + head_size),
+						(arrow_end[0] + head_size, arrow_end[1] + head_size)
+					]
+				elif "downward" in swing:
+					arrow_points = [
+						(arrow_end[0], arrow_end[1]),
+						(arrow_end[0] - head_size, arrow_end[1] - head_size),
+						(arrow_end[0] + head_size, arrow_end[1] - head_size)
+					]
+				elif "leftward" in swing:
+					arrow_points = [
+						(arrow_end[0], arrow_end[1]),
+						(arrow_end[0] + head_size, arrow_end[1] - head_size),
+						(arrow_end[0] + head_size, arrow_end[1] + head_size)
+					]
+				elif "rightward" in swing:
+					arrow_points = [
+						(arrow_end[0], arrow_end[1]),
+						(arrow_end[0] - head_size, arrow_end[1] - head_size),
+						(arrow_end[0] - head_size, arrow_end[1] + head_size)
+					]
+				
+				if 'arrow_points' in locals():
+					draw.polygon(arrow_points, fill=arrow_color)
+		
+		# Draw label with confidence (enhanced for doors)
+		if class_id == 3:  # door
+			swing_info = ""
+			if masks is not None and i < masks.shape[2]:
+				door_mask = masks[:, :, i]
+				orientation = analyzeDoorOrientation(door_mask, bbox, image_width, image_height)
+				swing_info = f" | {orientation.get('estimated_swing', 'unknown')}"
+			label = f"{class_names.get(class_id, 'Unknown')} ({confidence:.2f}){swing_info}"
+		else:
+			label = f"{class_names.get(class_id, 'Unknown')} ({confidence:.2f})"
 		
 		# Try to load a font, fall back to default if not available
 		try:
@@ -727,6 +812,346 @@ def saveAccuracyAnalysis(accuracy_data, test_num):
 		return filename
 	except Exception as e:
 		print(f"Error saving accuracy analysis: {str(e)}")
+		return None
+
+def analyzeDoorOrientation(door_mask, door_bbox, image_width, image_height):
+	"""
+	Analyze door orientation and opening direction based on geometric features
+	This is a post-processing approach using the detected door mask and position
+	"""
+	y1, x1, y2, x2 = door_bbox
+	door_width = x2 - x1
+	door_height = y2 - y1
+	
+	# Determine if door is horizontal or vertical based on aspect ratio
+	is_horizontal = door_width > door_height
+	
+	# Extract door region from mask
+	door_region = door_mask[y1:y2, x1:x2] if door_mask is not None else None
+	
+	orientation_analysis = {
+		"door_type": "horizontal" if is_horizontal else "vertical",
+		"estimated_swing": "unknown",
+		"hinge_side": "unknown", 
+		"confidence": 0.0,
+		"analysis_method": "geometric_inference"
+	}
+	
+	if door_region is not None:
+		# Analyze the door mask shape for opening indicators
+		door_center_x = (x1 + x2) / 2
+		door_center_y = (y1 + y2) / 2
+		
+		# For horizontal doors (most common in floor plans)
+		if is_horizontal:
+			# Check door position relative to image bounds to infer swing
+			distance_to_top = y1
+			distance_to_bottom = image_height - y2
+			distance_to_left = x1  
+			distance_to_right = image_width - x2
+			
+			# Heuristic: doors usually open into the larger space
+			if distance_to_top > distance_to_bottom:
+				orientation_analysis.update({
+					"estimated_swing": "opens_upward",
+					"hinge_side": "bottom_edge",
+					"confidence": 0.6
+				})
+			else:
+				orientation_analysis.update({
+					"estimated_swing": "opens_downward", 
+					"hinge_side": "top_edge",
+					"confidence": 0.6
+				})
+		
+		# For vertical doors
+		else:
+			if door_center_x < image_width / 2:
+				orientation_analysis.update({
+					"estimated_swing": "opens_rightward",
+					"hinge_side": "left_edge", 
+					"confidence": 0.6
+				})
+			else:
+				orientation_analysis.update({
+					"estimated_swing": "opens_leftward",
+					"hinge_side": "right_edge",
+					"confidence": 0.6
+				})
+		
+		# Analyze mask density for additional clues
+		if hasattr(door_region, 'shape') and door_region.size > 0:
+			mask_density = numpy.sum(door_region) / door_region.size
+			if mask_density > 0.7:
+				orientation_analysis["confidence"] = min(0.8, orientation_analysis["confidence"] + 0.2)
+	
+	return orientation_analysis
+
+def enhancedDoorAnalysis(door_objects, masks, image_width, image_height):
+	"""
+	Enhance door objects with orientation analysis
+	"""
+	enhanced_doors = []
+	
+	for i, door in enumerate(door_objects):
+		door_mask = masks[:, :, i] if i < masks.shape[2] else None
+		door_bbox = door["bbox"]
+		
+		# Convert bbox format for analysis
+		bbox_array = [door_bbox["y1"], door_bbox["x1"], door_bbox["y2"], door_bbox["x2"]]
+		
+		# Perform orientation analysis
+		orientation = analyzeDoorOrientation(door_mask, bbox_array, image_width, image_height)
+		
+		# Add orientation data to door object
+		enhanced_door = door.copy()
+		enhanced_door["orientation"] = orientation
+		
+		# Add architectural insights
+		enhanced_door["architectural_notes"] = generateArchitecturalNotes(orientation, door_bbox)
+		
+		enhanced_doors.append(enhanced_door)
+	
+	return enhanced_doors
+
+def generateArchitecturalNotes(orientation, bbox):
+	"""Generate architectural insights about door placement and orientation"""
+	notes = []
+	
+	door_width = bbox["x2"] - bbox["x1"] 
+	door_height = bbox["y2"] - bbox["y1"]
+	
+	# Standard door size analysis
+	if door_width > door_height:
+		if door_width >= 80:  # Assuming pixel measurements
+			notes.append("Likely a standard interior door (32+ inches)")
+		else:
+			notes.append("Possible narrow door or entry")
+	
+	# Swing direction implications
+	swing = orientation.get("estimated_swing", "")
+	if "upward" in swing:
+		notes.append("May open into upper room/hallway")
+	elif "downward" in swing:
+		notes.append("May open into lower room/hallway") 
+	elif "leftward" in swing:
+		notes.append("Opens toward left side of floor plan")
+	elif "rightward" in swing:
+		notes.append("Opens toward right side of floor plan")
+	
+	# Confidence-based recommendations
+	confidence = orientation.get("confidence", 0)
+	if confidence < 0.5:
+		notes.append("Low confidence - manual verification recommended")
+	elif confidence > 0.7:
+		notes.append("High confidence orientation prediction")
+	
+	return notes
+
+@application.route('/analyze_doors', methods=['POST'])
+def analyze_door_orientation():
+	"""Dedicated endpoint for detailed door orientation and architectural analysis"""
+	global cfg, _model
+	
+	try:
+		imagefile = Image.open(request.files['image'].stream)
+		image, w, h = myImageLoader(imagefile)
+		print(f"Analyzing door orientations for image: {h}x{w}")
+		
+		scaled_image = mold_image(image, cfg)
+		sample = expand_dims(scaled_image, 0)
+
+		# Get model predictions
+		r = _model.detect(sample, verbose=0)[0]
+		
+		# Filter for doors only
+		door_indices = [i for i, class_id in enumerate(r['class_ids']) if class_id == 3]
+		
+		if not door_indices:
+			return jsonify({
+				"message": "No doors detected in the floor plan",
+				"total_doors": 0,
+				"doors": []
+			})
+		
+		# Extract door-specific data
+		door_bboxes = [r['rois'][i] for i in door_indices]
+		door_scores = [r['scores'][i] for i in door_indices]
+		door_masks = r['masks'][:, :, door_indices] if len(door_indices) > 0 else None
+		
+		# Perform detailed door analysis
+		detailed_doors = []
+		for i, (bbox, confidence) in enumerate(zip(door_bboxes, door_scores)):
+			door_mask = door_masks[:, :, i] if door_masks is not None else None
+			
+			# Basic door properties
+			y1, x1, y2, x2 = bbox
+			door_width = float(x2 - x1)
+			door_height = float(y2 - y1)
+			door_area = door_width * door_height
+			
+			# Orientation analysis
+			orientation = analyzeDoorOrientation(door_mask, bbox, w, h)
+			
+			# Architectural analysis
+			door_bbox_dict = {"x1": float(x1), "y1": float(y1), "x2": float(x2), "y2": float(y2)}
+			architectural_notes = generateArchitecturalNotes(orientation, door_bbox_dict)
+			
+			# Build comprehensive door data
+			door_data = {
+				"door_id": i + 1,
+				"confidence": float(confidence),
+				"location": {
+					"bbox": door_bbox_dict,
+					"center": {
+						"x": float((x1 + x2) / 2),
+						"y": float((y1 + y2) / 2)
+					},
+					"relative_position": {
+						"from_left": f"{(x1/w)*100:.1f}%",
+						"from_top": f"{(y1/h)*100:.1f}%"
+					}
+				},
+				"dimensions": {
+					"width_px": door_width,
+					"height_px": door_height,
+					"area_px": door_area,
+					"aspect_ratio": door_width / door_height if door_height > 0 else 0
+				},
+				"orientation": orientation,
+				"architectural_analysis": {
+					"door_type": "interior" if door_width < door_height else "entrance",
+					"size_category": categorize_door_size(door_width, door_height),
+					"accessibility": assess_door_accessibility(door_width),
+					"notes": architectural_notes
+				}
+			}
+			
+			detailed_doors.append(door_data)
+		
+		# Overall door analysis summary
+		door_summary = {
+			"total_doors_detected": len(detailed_doors),
+			"average_confidence": float(numpy.mean(door_scores)),
+			"door_orientations": {
+				"horizontal": sum(1 for d in detailed_doors if d["orientation"]["door_type"] == "horizontal"),
+				"vertical": sum(1 for d in detailed_doors if d["orientation"]["door_type"] == "vertical")
+			},
+			"swing_directions": {},
+			"high_confidence_doors": sum(1 for d in detailed_doors if d["confidence"] > 0.8),
+			"layout_insights": generate_door_layout_insights(detailed_doors, w, h)
+		}
+		
+		# Count swing directions
+		for door in detailed_doors:
+			swing = door["orientation"]["estimated_swing"]
+			door_summary["swing_directions"][swing] = door_summary["swing_directions"].get(swing, 0) + 1
+		
+		# Save detailed door analysis
+		test_num = getNextTestNumber()
+		door_filename = f"doors{test_num}.json"
+		door_analysis = {
+			"metadata": {
+				"timestamp": datetime.now().isoformat(),
+				"image_dimensions": {"width": w, "height": h},
+				"analysis_type": "door_orientation_analysis"
+			},
+			"summary": door_summary,
+			"detailed_doors": detailed_doors
+		}
+		
+		save_door_analysis(door_analysis, door_filename)
+		
+		return jsonify({
+			"message": "Door orientation analysis completed successfully",
+			"analysis_file": door_filename,
+			**door_analysis
+		})
+		
+	except Exception as e:
+		print(f"Error in door orientation analysis: {str(e)}")
+		return jsonify({"error": str(e)}), 500
+
+def categorize_door_size(width, height):
+	"""Categorize door size based on dimensions"""
+	door_area = width * height
+	
+	if door_area < 2000:
+		return "small"
+	elif door_area < 6000:
+		return "standard"
+	elif door_area < 10000:
+		return "large"
+	else:
+		return "oversized"
+
+def assess_door_accessibility(width):
+	"""Assess door accessibility based on width"""
+	# Rough pixel-to-inch conversion (this would need calibration)
+	if width > 80:  # Assuming roughly 32+ inches
+		return "ADA_compliant_likely"
+	elif width > 60:  # Roughly 24+ inches
+		return "standard_width"
+	else:
+		return "narrow_door"
+
+def generate_door_layout_insights(doors, image_width, image_height):
+	"""Generate insights about door layout and positioning"""
+	insights = []
+	
+	if len(doors) == 0:
+		return ["No doors detected for layout analysis"]
+	
+	# Analyze door distribution
+	door_positions = [(d["location"]["center"]["x"], d["location"]["center"]["y"]) for d in doors]
+	
+	# Check for clustered doors
+	clustered_count = 0
+	for i, (x1, y1) in enumerate(door_positions):
+		for j, (x2, y2) in enumerate(door_positions[i+1:], i+1):
+			distance = ((x2-x1)**2 + (y2-y1)**2)**0.5
+			if distance < min(image_width, image_height) * 0.2:  # 20% of image size
+				clustered_count += 1
+	
+	if clustered_count > 0:
+		insights.append(f"Found {clustered_count} pairs of doors in close proximity")
+	
+	# Analyze door alignment
+	horizontal_doors = [d for d in doors if d["orientation"]["door_type"] == "horizontal"]
+	vertical_doors = [d for d in doors if d["orientation"]["door_type"] == "vertical"]
+	
+	if len(horizontal_doors) > len(vertical_doors):
+		insights.append("Predominantly horizontal door layout")
+	elif len(vertical_doors) > len(horizontal_doors):
+		insights.append("Predominantly vertical door layout")
+	else:
+		insights.append("Mixed door orientation layout")
+	
+	# Check for doors near image boundaries
+	boundary_doors = 0
+	for door in doors:
+		x, y = door["location"]["center"]["x"], door["location"]["center"]["y"]
+		margin = 0.1  # 10% margin
+		if (x < image_width * margin or x > image_width * (1-margin) or 
+			y < image_height * margin or y > image_height * (1-margin)):
+			boundary_doors += 1
+	
+	if boundary_doors > 0:
+		insights.append(f"{boundary_doors} doors positioned near floor plan boundaries")
+	
+	return insights
+
+def save_door_analysis(door_data, filename):
+	"""Save door analysis to file in root directory"""
+	filepath = os.path.join(ROOT_DIR, filename)
+	
+	try:
+		with open(filepath, 'w') as f:
+			json.dump(door_data, f, indent=2)
+		print(f"Door analysis saved to: {filepath}")
+		return filename
+	except Exception as e:
+		print(f"Error saving door analysis: {str(e)}")
 		return None
 
 if __name__ == '__main__':
