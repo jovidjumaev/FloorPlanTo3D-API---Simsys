@@ -15,6 +15,99 @@ FloorPlanTo3D is structured into two main parts:
 
 2.  **Unity Application**: A dynamic application that utilizes the API to construct a 3D scene from the analyzed 2D floor plan images, enabling users to customize their virtual environment.
 
+## Enhanced Features and Improvements
+
+This repository has been significantly enhanced with advanced analysis capabilities and new endpoints for comprehensive floor plan interpretation:
+
+### New API Endpoints
+
+**Enhanced Analysis Endpoint (`/`)**
+- Provides comprehensive JSON structure with detailed semantic data
+- Includes object dimensions, confidence scores, and center coordinates
+- Enhanced metadata with timestamp and image dimensions
+- Automatic file generation with simple naming convention (`plan{N}.json`)
+
+**Visualization Endpoint (`/visualize`)**
+- Creates visual overlay images showing detected objects with colored bounding boxes
+- Color-coded detection visualization:
+  - Red boxes for walls
+  - Green boxes for windows
+  - Blue boxes for doors
+- Includes confidence scores and swing direction labels for doors
+- Generates matching analysis files (`vis{N}.png` and `plan{N}.json`)
+
+**Accuracy Analysis Endpoint (`/analyze_accuracy`)**
+- Comprehensive reliability assessment of model predictions
+- Detection quality metrics categorized by confidence levels
+- Spatial analysis including overlap detection and size anomaly identification
+- Reliability scoring system (0-100 scale) with actionable recommendations
+- Generates detailed accuracy reports (`acc{N}.json`)
+
+**Door Orientation Analysis Endpoint (`/analyze_doors`)**
+- Dedicated endpoint for detailed door-specific analysis
+- Advanced door orientation detection using geometric inference
+- Swing direction analysis (opens_leftward, opens_rightward, opens_upward, opens_downward)
+- Hinge side identification and architectural insights
+- Accessibility assessment and door size categorization
+- Layout analysis including door clustering and positioning insights
+- Generates specialized door analysis reports (`doors{N}.json`)
+
+### Door Orientation Detection System
+
+**Geometric Analysis Features**
+- Post-processing approach using detected door masks and spatial context
+- Orientation inference based on door position relative to image boundaries
+- Confidence scoring for swing direction predictions
+- Architectural insights including door type classification and accessibility assessment
+
+**Enhanced Visualization**
+- Yellow directional arrows showing door swing directions
+- Enhanced labels displaying swing information
+- Visual confirmation of door orientation predictions
+- Improved architectural understanding through visual feedback
+
+### Technical Improvements
+
+**Enhanced Error Handling**
+- Improved image processing with multiple format support
+- Better handling of edge cases in mask analysis
+- Robust error recovery and informative error messages
+
+**Comprehensive Data Structure**
+- Detailed object analysis with mask coverage percentages
+- Spatial relationship analysis between detected objects
+- Enhanced statistical computations and confidence metrics
+
+**File Management System**
+- Automatic incremental file naming
+- Organized output file structure
+- Comprehensive logging and debugging information
+
+### Usage Examples
+
+```bash
+# Basic analysis with door orientation
+curl -X POST -F "image=@floor_plan.png" http://localhost:8080/
+
+# Create visualization with door arrows
+curl -X POST -F "image=@floor_plan.png" http://localhost:8080/visualize
+
+# Comprehensive door analysis
+curl -X POST -F "image=@floor_plan.png" http://localhost:8080/analyze_doors
+
+# Accuracy assessment
+curl -X POST -F "image=@floor_plan.png" http://localhost:8080/analyze_accuracy
+```
+
+### Output Files Generated
+
+- `plan{N}.json` - Comprehensive analysis with door orientation data
+- `vis{N}.png` - Visual overlay with colored bounding boxes and door arrows
+- `doors{N}.json` - Detailed door-specific analysis and insights
+- `acc{N}.json` - Accuracy assessment and reliability reports
+
+These enhancements significantly improve the architectural analysis capabilities of the original FloorPlanTo3D system, providing detailed insights into door orientations, spatial relationships, and overall floor plan interpretation accuracy.
+
 ## Installation
 
 To set up and run the project, follow these steps:
