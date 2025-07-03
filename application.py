@@ -1320,8 +1320,13 @@ def segment_individual_walls(wall_mask):
 	# Skeletonize to find centerlines
 	skeleton = skeletonize(cleaned_mask)
 	
-	# Find junction points using simpler method
+	# Find junction points using ultra-conservative method
 	junctions = find_junction_points_simple(skeleton)
+	
+	# If still too many junctions, use minimal detection
+	if len(junctions) > 15:
+		print(f"Too many junctions ({len(junctions)}), using minimal detection")
+		junctions = []  # Disable junction detection for cleaner visualization
 	
 	# Remove junction points to separate wall segments
 	skeleton_segmented = skeleton.copy()
