@@ -1659,8 +1659,19 @@ def visualize_wall_analysis():
 		
 		# Perform wall analysis
 		wall_segments, junctions = segment_individual_walls(combined_wall_mask)
+		print(f"DEBUG: Found {len(wall_segments)} wall segments and {len(junctions)} junctions")
+		
 		wall_parameters = extract_wall_parameters(wall_segments, combined_wall_mask, junctions)
+		print(f"DEBUG: Extracted {len(wall_parameters)} wall parameters")
+		
 		junction_analysis = analyze_junction_types(junctions, find_wall_connections(wall_segments, junctions))
+		print(f"DEBUG: Analyzed {len(junction_analysis)} junctions")
+		
+		# Debug: Print first few wall centerlines
+		for i, wall in enumerate(wall_parameters[:3]):
+			print(f"DEBUG: Wall {wall['wall_id']} has {len(wall['centerline'])} centerline points")
+			if wall['centerline']:
+				print(f"DEBUG: First centerline point: {wall['centerline'][0]}")
 		
 		# Create enhanced visualization
 		vis_image = create_wall_visualization(original_image, r, wall_parameters, junction_analysis, w, h)
@@ -1841,9 +1852,12 @@ def create_wall_visualization(original_image, model_results, wall_parameters, ju
 		draw.text((text_x, text_y), label, fill=(255, 255, 255), font=font)
 	
 	# Draw wall centerlines
+	print(f"DEBUG: Drawing {len(wall_parameters)} wall centerlines")
 	for wall in wall_parameters:
 		centerline = wall["centerline"]
+		print(f"DEBUG: Processing wall {wall['wall_id']} with {len(centerline)} centerline points")
 		if len(centerline) > 1:
+			print(f"DEBUG: Drawing centerline for {wall['wall_id']}")
 			# Draw centerline
 			for i in range(1, len(centerline)):
 				draw.line([centerline[i-1], centerline[i]], fill=centerline_color, width=2)
@@ -1873,9 +1887,11 @@ def create_wall_visualization(original_image, model_results, wall_parameters, ju
 				draw.text((text_x, text_y), wall_id, fill=text_color, font=font)
 	
 	# Draw junctions
+	print(f"DEBUG: Drawing {len(junction_analysis)} junctions")
 	for junction in junction_analysis:
 		pos = junction["position"]
 		junction_id = junction["junction_id"]
+		print(f"DEBUG: Drawing junction {junction_id} at position {pos}")
 		
 		# Draw junction circle
 		radius = 8
