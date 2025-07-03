@@ -1176,48 +1176,69 @@ def extract_wall_masks(model_results):
 	return wall_masks, wall_indices
 
 def find_junction_points(skeleton):
-	"""Find junction points where multiple walls meet"""
+	"""Find junction points where multiple walls meet - only real intersections"""
 	junctions = []
 	h, w = skeleton.shape
 	
-	# Check each point in skeleton
-	for y in range(1, h-1):
-		for x in range(1, w-1):
+	# Check each point in skeleton with a more restrictive approach
+	for y in range(2, h-2):  # Stay further from edges
+		for x in range(2, w-2):
 			if skeleton[y, x]:
-				# Count neighboring skeleton pixels
-				neighbors = skeleton[y-1:y+2, x-1:x+2]
-				neighbor_count = numpy.sum(neighbors) - 1  # Subtract center pixel
+				# Count connected components in 3x3 neighborhood
+				# A true junction should connect 3 or more separate line segments
+				neighbors = skeleton[y-1:y+2, x-1:x+2].copy()
+				neighbors[1, 1] = False  # Remove center pixel
 				
-				# Junction if more than 2 neighbors (excluding center)
-				if neighbor_count > 2:
+				# Label connected components in the neighborhood
+				from skimage.measure import label
+				labeled_neighbors = label(neighbors, connectivity=2)
+				num_components = numpy.max(labeled_neighbors)
+				
+				# Only consider it a junction if it connects 3+ separate components
+				if num_components >= 3:
 					junctions.append((x, y))
-				
-				# Also check for corner patterns (L-shaped junctions)
-				elif neighbor_count == 2:
-					# Check if it's a corner by looking at the pattern
-					# A corner typically has 2 neighbors not adjacent to each other
-					neighbor_positions = []
-					for dy in [-1, 0, 1]:
-						for dx in [-1, 0, 1]:
-							if dx == 0 and dy == 0:
-								continue
-							if skeleton[y+dy, x+dx]:
-								neighbor_positions.append((dx, dy))
-					
-					if len(neighbor_positions) == 2:
-						# Check if neighbors are not adjacent (corner pattern)
-						p1, p2 = neighbor_positions
-						# If neighbors are not adjacent, it's likely a corner
-						if abs(p1[0] - p2[0]) + abs(p1[1] - p2[1]) > 1:
-							junctions.append((x, y))
 	
-	# Remove duplicate junctions (within 5 pixels of each other)
+	# More aggressive duplicate removal (within 15 pixels)
 	filtered_junctions = []
 	for junction in junctions:
 		is_duplicate = False
 		for existing in filtered_junctions:
 			dist = ((junction[0] - existing[0])**2 + (junction[1] - existing[1])**2)**0.5
-			if dist < 5:
+			if dist < 15:  # Larger radius to remove more duplicates
+				is_duplicate = True
+				break
+		if not is_duplicate:
+			filtered_junctions.append(junction)
+	
+	return filtered_junctions
+
+def find_junction_points_simple(skeleton):
+	"""Simple junction detection - find endpoints and intersections only"""
+	junctions = []
+	h, w = skeleton.shape
+	
+	for y in range(1, h-1):
+		for x in range(1, w-1):
+			if skeleton[y, x]:
+				# Count skeleton neighbors in 8-connectivity
+				neighbors = [
+					skeleton[y-1, x-1], skeleton[y-1, x], skeleton[y-1, x+1],
+					skeleton[y, x-1],                     skeleton[y, x+1],
+					skeleton[y+1, x-1], skeleton[y+1, x], skeleton[y+1, x+1]
+				]
+				neighbor_count = sum(neighbors)
+				
+				# Junction points: endpoints (1 neighbor) or intersections (3+ neighbors)
+				if neighbor_count == 1 or neighbor_count >= 3:
+					junctions.append((x, y))
+	
+	# Remove duplicates within 10 pixels
+	filtered_junctions = []
+	for junction in junctions:
+		is_duplicate = False
+		for existing in filtered_junctions:
+			dist = ((junction[0] - existing[0])**2 + (junction[1] - existing[1])**2)**0.5
+			if dist < 10:
 				is_duplicate = True
 				break
 		if not is_duplicate:
@@ -1233,8 +1254,8 @@ def segment_individual_walls(wall_mask):
 	# Skeletonize to find centerlines
 	skeleton = skeletonize(cleaned_mask)
 	
-	# Find junction points
-	junctions = find_junction_points(skeleton)
+	# Find junction points using simpler method
+	junctions = find_junction_points_simple(skeleton)
 	
 	# Remove junction points to separate wall segments
 	skeleton_segmented = skeleton.copy()
@@ -1659,19 +1680,8 @@ def visualize_wall_analysis():
 		
 		# Perform wall analysis
 		wall_segments, junctions = segment_individual_walls(combined_wall_mask)
-		print(f"DEBUG: Found {len(wall_segments)} wall segments and {len(junctions)} junctions")
-		
 		wall_parameters = extract_wall_parameters(wall_segments, combined_wall_mask, junctions)
-		print(f"DEBUG: Extracted {len(wall_parameters)} wall parameters")
-		
 		junction_analysis = analyze_junction_types(junctions, find_wall_connections(wall_segments, junctions))
-		print(f"DEBUG: Analyzed {len(junction_analysis)} junctions")
-		
-		# Debug: Print first few wall centerlines
-		for i, wall in enumerate(wall_parameters[:3]):
-			print(f"DEBUG: Wall {wall['wall_id']} has {len(wall['centerline'])} centerline points")
-			if wall['centerline']:
-				print(f"DEBUG: First centerline point: {wall['centerline'][0]}")
 		
 		# Create enhanced visualization
 		vis_image = create_wall_visualization(original_image, r, wall_parameters, junction_analysis, w, h)
@@ -1852,12 +1862,9 @@ def create_wall_visualization(original_image, model_results, wall_parameters, ju
 		draw.text((text_x, text_y), label, fill=(255, 255, 255), font=font)
 	
 	# Draw wall centerlines
-	print(f"DEBUG: Drawing {len(wall_parameters)} wall centerlines")
 	for wall in wall_parameters:
 		centerline = wall["centerline"]
-		print(f"DEBUG: Processing wall {wall['wall_id']} with {len(centerline)} centerline points")
 		if len(centerline) > 1:
-			print(f"DEBUG: Drawing centerline for {wall['wall_id']}")
 			# Draw centerline
 			for i in range(1, len(centerline)):
 				# Ensure coordinates are tuples (x, y)
@@ -1890,11 +1897,9 @@ def create_wall_visualization(original_image, model_results, wall_parameters, ju
 				draw.text((text_x, text_y), wall_id, fill=text_color, font=font)
 	
 	# Draw junctions
-	print(f"DEBUG: Drawing {len(junction_analysis)} junctions")
 	for junction in junction_analysis:
 		pos = junction["position"]
 		junction_id = junction["junction_id"]
-		print(f"DEBUG: Drawing junction {junction_id} at position {pos}")
 		
 		# Draw junction circle
 		radius = 12
