@@ -264,8 +264,9 @@ def buildEnhancedJson(model_results, image_width, image_height, original_image):
 	
 	# Enhance doors with orientation analysis
 	if door_objects:
-		door_masks = masks[:, :, [i for i, cid in enumerate(class_ids) if cid == 3]]
-		enhanced_doors = enhancedDoorAnalysis(door_objects, door_masks, image_width, image_height)
+		# Get door indices and extract masks properly
+		door_indices = [i for i, cid in enumerate(class_ids) if cid == 3]
+		enhanced_doors = enhancedDoorAnalysis(door_objects, masks, door_indices, image_width, image_height)
 		
 		# Replace door objects in main list with enhanced versions
 		door_index = 0
@@ -826,8 +827,8 @@ def analyzeDoorOrientation(door_mask, door_bbox, image_width, image_height):
 	# Determine if door is horizontal or vertical based on aspect ratio
 	is_horizontal = door_width > door_height
 	
-	# Extract door region from mask
-	door_region = door_mask[y1:y2, x1:x2] if door_mask is not None else None
+	# Extract door region from mask (ensure integer indices)
+	door_region = door_mask[int(y1):int(y2), int(x1):int(x2)] if door_mask is not None else None
 	
 	orientation_analysis = {
 		"door_type": "horizontal" if is_horizontal else "vertical",
@@ -887,14 +888,16 @@ def analyzeDoorOrientation(door_mask, door_bbox, image_width, image_height):
 	
 	return orientation_analysis
 
-def enhancedDoorAnalysis(door_objects, masks, image_width, image_height):
+def enhancedDoorAnalysis(door_objects, masks, door_indices, image_width, image_height):
 	"""
 	Enhance door objects with orientation analysis
 	"""
 	enhanced_doors = []
 	
 	for i, door in enumerate(door_objects):
-		door_mask = masks[:, :, i] if i < masks.shape[2] else None
+		# Get the correct mask index for this door
+		door_mask_index = door_indices[i] if i < len(door_indices) else None
+		door_mask = masks[:, :, door_mask_index] if door_mask_index is not None and door_mask_index < masks.shape[2] else None
 		door_bbox = door["bbox"]
 		
 		# Convert bbox format for analysis
@@ -977,12 +980,14 @@ def analyze_door_orientation():
 		# Extract door-specific data
 		door_bboxes = [r['rois'][i] for i in door_indices]
 		door_scores = [r['scores'][i] for i in door_indices]
-		door_masks = r['masks'][:, :, door_indices] if len(door_indices) > 0 else None
+		door_masks = r['masks'] if len(door_indices) > 0 else None
 		
 		# Perform detailed door analysis
 		detailed_doors = []
 		for i, (bbox, confidence) in enumerate(zip(door_bboxes, door_scores)):
-			door_mask = door_masks[:, :, i] if door_masks is not None else None
+			# Get the correct mask index for this door
+			door_mask_index = door_indices[i] if i < len(door_indices) else None
+			door_mask = door_masks[:, :, door_mask_index] if door_masks is not None and door_mask_index is not None else None
 			
 			# Basic door properties
 			y1, x1, y2, x2 = bbox
