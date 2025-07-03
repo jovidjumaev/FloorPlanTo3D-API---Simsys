@@ -1191,8 +1191,39 @@ def find_junction_points(skeleton):
 				# Junction if more than 2 neighbors (excluding center)
 				if neighbor_count > 2:
 					junctions.append((x, y))
+				
+				# Also check for corner patterns (L-shaped junctions)
+				elif neighbor_count == 2:
+					# Check if it's a corner by looking at the pattern
+					# A corner typically has 2 neighbors not adjacent to each other
+					neighbor_positions = []
+					for dy in [-1, 0, 1]:
+						for dx in [-1, 0, 1]:
+							if dx == 0 and dy == 0:
+								continue
+							if skeleton[y+dy, x+dx]:
+								neighbor_positions.append((dx, dy))
+					
+					if len(neighbor_positions) == 2:
+						# Check if neighbors are not adjacent (corner pattern)
+						p1, p2 = neighbor_positions
+						# If neighbors are not adjacent, it's likely a corner
+						if abs(p1[0] - p2[0]) + abs(p1[1] - p2[1]) > 1:
+							junctions.append((x, y))
 	
-	return junctions
+	# Remove duplicate junctions (within 5 pixels of each other)
+	filtered_junctions = []
+	for junction in junctions:
+		is_duplicate = False
+		for existing in filtered_junctions:
+			dist = ((junction[0] - existing[0])**2 + (junction[1] - existing[1])**2)**0.5
+			if dist < 5:
+				is_duplicate = True
+				break
+		if not is_duplicate:
+			filtered_junctions.append(junction)
+	
+	return filtered_junctions
 
 def segment_individual_walls(wall_mask):
 	"""Segment connected wall regions into individual wall segments"""
@@ -1696,10 +1727,13 @@ def create_wall_visualization(original_image, model_results, wall_parameters, ju
 	junction_color = (255, 0, 255)       # Magenta for junctions
 	text_color = (0, 0, 0)               # Black for text
 	
+	class_names = {1: 'Wall', 2: 'Window', 3: 'Door'}
+	
 	# First draw regular detection boxes
 	bboxes = model_results['rois']
 	class_ids = model_results['class_ids']
 	scores = model_results['scores']
+	masks = model_results.get('masks', None)
 	
 	for i in range(len(bboxes)):
 		bbox = bboxes[i]
@@ -1712,6 +1746,99 @@ def create_wall_visualization(original_image, model_results, wall_parameters, ju
 		# Draw bounding box (thinner for walls to not interfere with centerlines)
 		width = 1 if class_id == 1 else 3
 		draw.rectangle([x1, y1, x2, y2], outline=color, width=width)
+		
+		# Enhanced door visualization with orientation
+		if class_id == 3 and masks is not None:  # door
+			door_mask = masks[:, :, i] if i < masks.shape[2] else None
+			orientation = analyzeDoorOrientation(door_mask, bbox, image_width, image_height)
+			
+			# Draw door orientation arrow
+			center_x = (x1 + x2) / 2
+			center_y = (y1 + y2) / 2
+			arrow_length = min((x2 - x1), (y2 - y1)) * 0.4
+			
+			# Determine arrow direction based on estimated swing
+			swing = orientation.get("estimated_swing", "")
+			arrow_color = (255, 255, 0)  # Yellow arrow
+			
+			if "upward" in swing:
+				arrow_end = (center_x, center_y - arrow_length)
+			elif "downward" in swing:
+				arrow_end = (center_x, center_y + arrow_length)
+			elif "leftward" in swing:
+				arrow_end = (center_x - arrow_length, center_y)
+			elif "rightward" in swing:
+				arrow_end = (center_x + arrow_length, center_y)
+			else:
+				arrow_end = (center_x, center_y)  # No arrow for unknown
+			
+			# Draw arrow line
+			if arrow_end != (center_x, center_y):
+				draw.line([(center_x, center_y), arrow_end], fill=arrow_color, width=3)
+				
+				# Draw arrow head (simple triangle)
+				head_size = 8
+				if "upward" in swing:
+					arrow_points = [
+						(arrow_end[0], arrow_end[1]),
+						(arrow_end[0] - head_size, arrow_end[1] + head_size),
+						(arrow_end[0] + head_size, arrow_end[1] + head_size)
+					]
+				elif "downward" in swing:
+					arrow_points = [
+						(arrow_end[0], arrow_end[1]),
+						(arrow_end[0] - head_size, arrow_end[1] - head_size),
+						(arrow_end[0] + head_size, arrow_end[1] - head_size)
+					]
+				elif "leftward" in swing:
+					arrow_points = [
+						(arrow_end[0], arrow_end[1]),
+						(arrow_end[0] + head_size, arrow_end[1] - head_size),
+						(arrow_end[0] + head_size, arrow_end[1] + head_size)
+					]
+				elif "rightward" in swing:
+					arrow_points = [
+						(arrow_end[0], arrow_end[1]),
+						(arrow_end[0] - head_size, arrow_end[1] - head_size),
+						(arrow_end[0] - head_size, arrow_end[1] + head_size)
+					]
+				
+				if 'arrow_points' in locals():
+					draw.polygon(arrow_points, fill=arrow_color)
+					del arrow_points  # Clean up for next iteration
+		
+		# Draw label with confidence (enhanced for doors)
+		if class_id == 3:  # door
+			swing_info = ""
+			if masks is not None and i < masks.shape[2]:
+				door_mask = masks[:, :, i]
+				orientation = analyzeDoorOrientation(door_mask, bbox, image_width, image_height)
+				swing_info = f" | {orientation.get('estimated_swing', 'unknown')}"
+			label = f"{class_names.get(class_id, 'Unknown')} ({confidence:.2f}){swing_info}"
+		else:
+			label = f"{class_names.get(class_id, 'Unknown')} ({confidence:.2f})"
+		
+		# Try to load a font, fall back to default if not available
+		try:
+			font = ImageFont.truetype("/System/Library/Fonts/Arial.ttf", 12)
+		except:
+			font = ImageFont.load_default()
+		
+		# Calculate text size and position
+		text_bbox = draw.textbbox((0, 0), label, font=font)
+		text_width = text_bbox[2] - text_bbox[0]
+		text_height = text_bbox[3] - text_bbox[1]
+		
+		# Position label above the bounding box
+		text_x = x1
+		text_y = max(0, y1 - text_height - 5)
+		
+		# Draw text background
+		draw.rectangle([text_x, text_y, text_x + text_width, text_y + text_height], 
+					  fill=color, outline=color)
+		
+		# Draw text
+		draw.text((text_x, text_y), label, fill=(255, 255, 255), font=font)
 	
 	# Draw wall centerlines
 	for wall in wall_parameters:
@@ -1782,7 +1909,8 @@ def create_wall_visualization(original_image, model_results, wall_parameters, ju
 		("Centerlines (Yellow)", centerline_color),
 		("Junctions (Magenta)", junction_color),
 		("Windows (Green)", (0, 255, 0)),
-		("Doors (Blue)", (0, 0, 255))
+		("Doors (Blue)", (0, 0, 255)),
+		("Door Arrows (Yellow)", (255, 255, 0))
 	]
 	
 	try:
