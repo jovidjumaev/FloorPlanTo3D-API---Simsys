@@ -52,6 +52,16 @@ This repository has been significantly enhanced with advanced analysis capabilit
 - Layout analysis including door clustering and positioning insights
 - Generates specialized door analysis reports (`doors{N}.json`)
 
+**Wall Parameter Extraction Endpoints (`/analyze_walls`, `/visualize_walls`)**
+- Comprehensive wall centerline detection using skeletonization algorithms
+- Individual wall segmentation from connected wall regions
+- Wall thickness calculation using distance transform analysis
+- Junction point detection and classification (corner, T-junction, cross-junction)
+- Wall orientation and length measurements
+- Wall connectivity analysis and architectural insights
+- Enhanced visualization with centerlines, junctions, and wall IDs
+- Generates detailed wall analysis reports (`walls{N}.json`) and visualizations (`wall_vis{N}.png`)
+
 ### Door Orientation Detection System
 
 **Geometric Analysis Features**
@@ -65,6 +75,35 @@ This repository has been significantly enhanced with advanced analysis capabilit
 - Enhanced labels displaying swing information
 - Visual confirmation of door orientation predictions
 - Improved architectural understanding through visual feedback
+
+### Wall Parameter Extraction System
+
+**Advanced Wall Analysis Features**
+- Individual wall segmentation using skeletonization and morphological operations
+- Centerline extraction for precise architectural measurements
+- Wall thickness profiling using distance transform algorithms
+- Junction point detection and classification system
+- Comprehensive connectivity analysis between wall segments
+
+**Wall Parameter Analysis**
+- Wall centerlines with ordered coordinate sequences
+- Thickness measurements along entire wall length (average, min, max, profile)
+- Wall orientation calculations in degrees
+- Length measurements in pixels with conversion potential
+- Bounding box analysis for each wall segment
+
+**Junction Analysis System**
+- Automatic detection of wall intersection points
+- Classification of junction types (corner, T-junction, cross-junction, complex)
+- Wall connectivity mapping showing which walls connect at each junction
+- Spatial relationship analysis between wall segments
+
+**Enhanced Wall Visualization**
+- Yellow centerlines overlaid on original floor plan
+- Magenta junction points with clear identification
+- Wall IDs (W1, W2, etc.) displayed at wall midpoints
+- Junction IDs (J1, J2, etc.) with connection information
+- Color-coded legend for easy interpretation
 
 ### Technical Improvements
 
@@ -95,6 +134,12 @@ curl -X POST -F "image=@floor_plan.png" http://localhost:8080/visualize
 # Comprehensive door analysis
 curl -X POST -F "image=@floor_plan.png" http://localhost:8080/analyze_doors
 
+# Wall parameter extraction and analysis
+curl -X POST -F "image=@floor_plan.png" http://localhost:8080/analyze_walls
+
+# Enhanced wall visualization with centerlines and junctions
+curl -X POST -F "image=@floor_plan.png" http://localhost:8080/visualize_walls
+
 # Accuracy assessment
 curl -X POST -F "image=@floor_plan.png" http://localhost:8080/analyze_accuracy
 ```
@@ -104,9 +149,11 @@ curl -X POST -F "image=@floor_plan.png" http://localhost:8080/analyze_accuracy
 - `plan{N}.json` - Comprehensive analysis with door orientation data
 - `vis{N}.png` - Visual overlay with colored bounding boxes and door arrows
 - `doors{N}.json` - Detailed door-specific analysis and insights
+- `walls{N}.json` - Individual wall parameters, centerlines, thickness, and junction analysis
+- `wall_vis{N}.png` - Enhanced visualization with wall centerlines, junctions, and wall IDs
 - `acc{N}.json` - Accuracy assessment and reliability reports
 
-These enhancements significantly improve the architectural analysis capabilities of the original FloorPlanTo3D system, providing detailed insights into door orientations, spatial relationships, and overall floor plan interpretation accuracy.
+These enhancements significantly improve the architectural analysis capabilities of the original FloorPlanTo3D system, providing detailed insights into door orientations, individual wall parameters, spatial relationships, and overall floor plan interpretation accuracy. The system now offers comprehensive wall centerline extraction, thickness analysis, and junction detection for professional architectural analysis.
 
 ## Installation
 
