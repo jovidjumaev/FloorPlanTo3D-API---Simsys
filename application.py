@@ -1213,32 +1213,98 @@ def find_junction_points(skeleton):
 	return filtered_junctions
 
 def find_junction_points_simple(skeleton):
-	"""Simple junction detection - find endpoints and intersections only"""
-	junctions = []
-	h, w = skeleton.shape
+	"""Ultra-conservative junction detection - only real intersections"""
+	from scipy.ndimage import binary_erosion, binary_dilation
 	
-	for y in range(1, h-1):
-		for x in range(1, w-1):
-			if skeleton[y, x]:
-				# Count skeleton neighbors in 8-connectivity
-				neighbors = [
-					skeleton[y-1, x-1], skeleton[y-1, x], skeleton[y-1, x+1],
-					skeleton[y, x-1],                     skeleton[y, x+1],
-					skeleton[y+1, x-1], skeleton[y+1, x], skeleton[y+1, x+1]
-				]
-				neighbor_count = sum(neighbors)
+	# Clean the skeleton first to remove noise
+	# Erode then dilate to remove small artifacts
+	cleaned_skeleton = binary_erosion(skeleton, iterations=1)
+	cleaned_skeleton = binary_dilation(cleaned_skeleton, iterations=1)
+	
+	junctions = []
+	h, w = cleaned_skeleton.shape
+	
+	# Only check every 5th pixel to avoid noise
+	for y in range(5, h-5, 5):
+		for x in range(5, w-5, 5):
+			if cleaned_skeleton[y, x]:
+				# Check in a larger 5x5 neighborhood to be more stable
+				region = cleaned_skeleton[y-2:y+3, x-2:x+3]
 				
-				# Junction points: endpoints (1 neighbor) or intersections (3+ neighbors)
-				if neighbor_count == 1 or neighbor_count >= 3:
+				# Count distinct line directions
+				# Look for pixels in cardinal and diagonal directions
+				directions = [
+					region[0, 2],  # North
+					region[4, 2],  # South  
+					region[2, 0],  # West
+					region[2, 4],  # East
+					region[0, 0],  # NW
+					region[0, 4],  # NE
+					region[4, 0],  # SW
+					region[4, 4]   # SE
+				]
+				
+				# Count how many directions have connections
+				direction_count = sum(directions)
+				
+				# Only consider it a junction if it connects 3+ directions
+				# AND is far from image boundaries
+				if direction_count >= 3 and x > 20 and x < w-20 and y > 20 and y < h-20:
 					junctions.append((x, y))
 	
-	# Remove duplicates within 10 pixels
+	# Very aggressive duplicate removal (within 30 pixels)
 	filtered_junctions = []
 	for junction in junctions:
 		is_duplicate = False
 		for existing in filtered_junctions:
 			dist = ((junction[0] - existing[0])**2 + (junction[1] - existing[1])**2)**0.5
-			if dist < 10:
+			if dist < 30:  # Much larger radius
+				is_duplicate = True
+				break
+		if not is_duplicate:
+			filtered_junctions.append(junction)
+	
+	# Final filter: only keep junctions that are actually meaningful
+	# Limit to maximum 20 junctions for the entire floor plan
+	if len(filtered_junctions) > 20:
+		# Keep only the strongest junctions (those with most connections)
+		junction_scores = []
+		for jx, jy in filtered_junctions:
+			if 0 <= jy < h and 0 <= jx < w:
+				region = cleaned_skeleton[max(0,jy-3):min(h,jy+4), max(0,jx-3):min(w,jx+4)]
+				score = numpy.sum(region)
+				junction_scores.append((score, (jx, jy)))
+		
+		# Sort by score and keep top 20
+		junction_scores.sort(reverse=True)
+		filtered_junctions = [junction for score, junction in junction_scores[:20]]
+	
+	return filtered_junctions
+
+def find_junctions_from_bboxes(wall_bboxes):
+	"""Alternative: Find junctions from wall bounding box intersections"""
+	junctions = []
+	
+	# Check each pair of wall bounding boxes for intersections
+	for i, bbox1 in enumerate(wall_bboxes):
+		for j, bbox2 in enumerate(wall_bboxes[i+1:], i+1):
+			y1_1, x1_1, y2_1, x2_1 = bbox1
+			y1_2, x1_2, y2_2, x2_2 = bbox2
+			
+			# Check if bounding boxes intersect
+			if not (x2_1 < x1_2 or x2_2 < x1_1 or y2_1 < y1_2 or y2_2 < y1_1):
+				# Calculate intersection point
+				intersection_x = (max(x1_1, x1_2) + min(x2_1, x2_2)) / 2
+				intersection_y = (max(y1_1, y1_2) + min(y2_1, y2_2)) / 2
+				junctions.append((intersection_x, intersection_y))
+	
+	# Remove duplicates
+	filtered_junctions = []
+	for junction in junctions:
+		is_duplicate = False
+		for existing in filtered_junctions:
+			dist = ((junction[0] - existing[0])**2 + (junction[1] - existing[1])**2)**0.5
+			if dist < 25:
 				is_duplicate = True
 				break
 		if not is_duplicate:
