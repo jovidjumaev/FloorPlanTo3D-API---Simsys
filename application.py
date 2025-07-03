@@ -1734,7 +1734,7 @@ def create_wall_visualization(original_image, model_results, wall_parameters, ju
 		3: (0, 0, 255)      # Door - Blue
 	}
 	
-	centerline_color = (255, 255, 0)     # Yellow for centerlines
+	centerline_color = (0, 255, 255)     # Cyan for centerlines (more visible)
 	junction_color = (255, 0, 255)       # Magenta for junctions
 	text_color = (0, 0, 0)               # Black for text
 	
@@ -1860,7 +1860,10 @@ def create_wall_visualization(original_image, model_results, wall_parameters, ju
 			print(f"DEBUG: Drawing centerline for {wall['wall_id']}")
 			# Draw centerline
 			for i in range(1, len(centerline)):
-				draw.line([centerline[i-1], centerline[i]], fill=centerline_color, width=2)
+				# Ensure coordinates are tuples (x, y)
+				p1 = tuple(centerline[i-1]) if isinstance(centerline[i-1], list) else centerline[i-1]
+				p2 = tuple(centerline[i]) if isinstance(centerline[i], list) else centerline[i]
+				draw.line([p1, p2], fill=centerline_color, width=4)
 			
 			# Draw wall ID at midpoint
 			if len(centerline) > 0:
@@ -1894,9 +1897,9 @@ def create_wall_visualization(original_image, model_results, wall_parameters, ju
 		print(f"DEBUG: Drawing junction {junction_id} at position {pos}")
 		
 		# Draw junction circle
-		radius = 8
+		radius = 12
 		draw.ellipse([pos[0]-radius, pos[1]-radius, pos[0]+radius, pos[1]+radius], 
-					fill=junction_color, outline=(0, 0, 0), width=2)
+					fill=junction_color, outline=(0, 0, 0), width=3)
 		
 		# Draw junction ID
 		try:
@@ -1922,7 +1925,7 @@ def create_wall_visualization(original_image, model_results, wall_parameters, ju
 	legend_y = 10
 	legend_items = [
 		("Walls (Red boxes)", (255, 0, 0)),
-		("Centerlines (Yellow)", centerline_color),
+		("Centerlines (Cyan)", centerline_color),
 		("Junctions (Magenta)", junction_color),
 		("Windows (Green)", (0, 255, 0)),
 		("Doors (Blue)", (0, 0, 255)),
