@@ -12,7 +12,7 @@ from mrcnn.model import mold_image
 
 from skimage.draw import polygon2mask
 from skimage.io import imread
-from skimage.morphology import skeletonize, remove_small_objects, label
+from skimage.morphology import skeletonize, remove_small_objects, label, binary_erosion, disk
 from skimage.measure import find_contours, regionprops
 from scipy.ndimage import distance_transform_edt
 from scipy.spatial.distance import pdist, squareform
@@ -33,6 +33,8 @@ from werkzeug.utils import secure_filename
 import tensorflow as tf
 import sys
 from PIL import Image, ImageDraw, ImageFont
+import numpy as np
+from skimage.draw import line as skimage_line
 
 # Global variables
 global _model
@@ -1312,74 +1314,144 @@ def find_junctions_from_bboxes(wall_bboxes):
 	
 	return filtered_junctions
 
+def keep_largest_component(binary_img):
+    """Keep only the largest connected component in a binary image."""
+    labeled = label(binary_img)
+    if labeled.max() == 0:
+        return binary_img  # nothing to keep
+    largest_cc = (labeled == numpy.argmax(numpy.bincount(labeled.flat)[1:]) + 1)
+    return largest_cc
+
 def segment_individual_walls(wall_mask):
-	"""Segment connected wall regions into individual wall segments"""
-	# Clean the mask
-	cleaned_mask = remove_small_objects(wall_mask, min_size=50)
+    """Segment connected wall regions into individual wall segments with robust per-region processing."""
+    cleaned_mask = remove_small_objects(wall_mask, min_size=50)
+    labeled_regions = label(cleaned_mask)
+    segments = []
+    all_junctions = []
+    num_regions = labeled_regions.max()
+    for region_idx in range(1, num_regions + 1):
+        region_mask = (labeled_regions == region_idx)
+        if np.sum(region_mask) < 20:
+            continue
+        skeleton = skeletonize(region_mask)
+        skeleton &= region_mask
+        junctions = find_junction_points_simple(skeleton)
+        all_junctions.extend(junctions)
+        skeleton_segmented = skeleton.copy()
+        for jx, jy in junctions:
+            skeleton_segmented[max(0, jy-1):min(skeleton.shape[0], jy+2), max(0, jx-1):min(skeleton.shape[1], jx+2)] = False
+        labeled_skeleton = label(skeleton_segmented)
+        for region in regionprops(labeled_skeleton):
+            if region.area > 5:
+                seg_coords = region.coords
+                # Keep only points strictly inside region mask
+                filtered_coords = validate_centerline_boundary(seg_coords, region_mask)
+                if len(filtered_coords) >= 2:
+                    segments.append(filtered_coords)
+    return segments, all_junctions
+
+def validate_centerline_boundary(segment_coords, wall_mask):
+	"""Validate that centerline points stay within wall boundaries"""
+	validated_coords = []
 	
-	# Skeletonize to find centerlines
-	skeleton = skeletonize(cleaned_mask)
+	for coord in segment_coords:
+		y, x = coord
+		# Check if the point is within the wall mask
+		if 0 <= y < wall_mask.shape[0] and 0 <= x < wall_mask.shape[1]:
+			if wall_mask[y, x]:
+				validated_coords.append(coord)
+			else:
+				# If point is outside wall, try to find nearest valid point
+				nearest_valid = find_nearest_valid_point(x, y, wall_mask)
+				if nearest_valid is not None:
+					validated_coords.append(nearest_valid)
+		else:
+			# Point is outside image bounds, skip it
+			continue
 	
-	# Find junction points using ultra-conservative method
-	junctions = find_junction_points_simple(skeleton)
+	return numpy.array(validated_coords) if validated_coords else numpy.array([])
+
+def find_nearest_valid_point(x, y, wall_mask, max_search_radius=5):
+	"""Find the nearest valid wall point within a search radius"""
+	height, width = wall_mask.shape
 	
-	# If still too many junctions, use minimal detection
-	if len(junctions) > 15:
-		print(f"Too many junctions ({len(junctions)}), using minimal detection")
-		junctions = []  # Disable junction detection for cleaner visualization
+	for radius in range(1, max_search_radius + 1):
+		for dy in range(-radius, radius + 1):
+			for dx in range(-radius, radius + 1):
+				# Check if this is a point on the radius boundary
+				if abs(dx) == radius or abs(dy) == radius:
+					new_y, new_x = y + dy, x + dx
+					if (0 <= new_y < height and 0 <= new_x < width and 
+						wall_mask[new_y, new_x]):
+						return (new_y, new_x)
 	
-	# Remove junction points to separate wall segments
-	skeleton_segmented = skeleton.copy()
-	for jx, jy in junctions:
-		# Remove small area around junction
-		skeleton_segmented[max(0,jy-1):min(skeleton.shape[0],jy+2), 
-						 max(0,jx-1):min(skeleton.shape[1],jx+2)] = False
-	
-	# Label connected components
-	labeled_skeleton = label(skeleton_segmented)
-	
-	# Extract individual segments
-	segments = []
-	for region in regionprops(labeled_skeleton):
-		if region.area > 10:  # Filter small segments
-			segment_coords = region.coords
-			segments.append(segment_coords)
-	
-	return segments, junctions
+	return None
 
 def extract_centerline_coords(segment_coords):
-	"""Extract ordered centerline coordinates from segment"""
+	"""Legacy extractor that now leverages connectivity ordering."""
 	if len(segment_coords) < 2:
 		return segment_coords.tolist()
-	
-	# Convert to list of [x, y] coordinates
-	centerline = [[int(coord[1]), int(coord[0])] for coord in segment_coords]
-	
-	# Sort coordinates to create ordered path
-	if len(centerline) > 2:
-		ordered_centerline = order_centerline_points(centerline)
-		return ordered_centerline
-	
-	return centerline
+	ordered = order_centerline_points_connectivity(segment_coords)
+	return ordered if ordered else segment_coords.tolist()
 
-def order_centerline_points(points):
-	"""Order centerline points to create a continuous path"""
-	if len(points) < 3:
-		return points
-	
-	# Start with first point
-	ordered = [points[0]]
-	remaining = points[1:]
-	
-	while remaining:
-		current = ordered[-1]
-		# Find closest remaining point
-		distances = [((p[0]-current[0])**2 + (p[1]-current[1])**2)**0.5 for p in remaining]
-		closest_idx = numpy.argmin(distances)
-		ordered.append(remaining[closest_idx])
-		remaining.pop(closest_idx)
-	
-	return ordered
+def order_centerline_points_connectivity(segment_coords):
+    """Order centerline points following skeleton connectivity (8-neighbour) to avoid diagonal shortcuts."""
+    # Convert to set of (x, y) tuples for fast lookup
+    coords_set = set((int(c[1]), int(c[0])) for c in segment_coords)
+    if not coords_set:
+        return []
+    # 8-neighbour offsets
+    nbrs = [(-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (1, 1), (-1, 1), (1, -1)]
+    # Compute degree of each pixel
+    degrees = {p: sum(((p[0]+dx, p[1]+dy) in coords_set) for dx, dy in nbrs) for p in coords_set}
+    # Endpoints have degree 1. If none, pick arbitrary start (loop)
+    endpoints = [p for p, d in degrees.items() if d == 1]
+    start = endpoints[0] if endpoints else next(iter(coords_set))
+    ordered = [start]
+    visited = {start}
+    current = start
+    while True:
+        next_pixel = None
+        for dx, dy in nbrs:
+            cand = (current[0]+dx, current[1]+dy)
+            if cand in coords_set and cand not in visited:
+                next_pixel = cand
+                break
+        if next_pixel is None:
+            break
+        ordered.append(next_pixel)
+        visited.add(next_pixel)
+        current = next_pixel
+    # Return as [x, y] lists
+    return [[p[0], p[1]] for p in ordered]
+
+def extract_centerline_coords_with_validation(segment_coords, wall_mask, min_length=2):
+    """Extract ordered centerline coordinates with connectivity ordering and robust in-mask validation, splitting into subpaths."""
+    if len(segment_coords) < 2:
+        return []
+    ordered_centerline = order_centerline_points_connectivity(segment_coords)
+    if len(ordered_centerline) < min_length:
+        return []
+    valid_paths = []
+    current_path = []
+    for i in range(1, len(ordered_centerline)):
+        p1 = ordered_centerline[i-1]
+        p2 = ordered_centerline[i]
+        rr, cc = skimage_line(p1[1], p1[0], p2[1], p2[0])
+        if np.all([0 <= y < wall_mask.shape[0] and 0 <= x < wall_mask.shape[1] and wall_mask[y, x] for y, x in zip(rr, cc)]):
+            if not current_path:
+                current_path.append(p1)
+            current_path.append(p2)
+        else:
+            if len(current_path) >= min_length:
+                valid_paths.append(current_path)
+            current_path = []
+    if len(current_path) >= min_length:
+        valid_paths.append(current_path)
+    if not valid_paths:
+        return []
+    # Return the longest valid path
+    return max(valid_paths, key=len)
 
 def calculate_wall_thickness(wall_mask, centerline_coords):
 	"""Calculate wall thickness along the centerline"""
@@ -1406,6 +1478,26 @@ def calculate_wall_thickness(wall_mask, centerline_coords):
 		"max": float(numpy.max(thickness_values)),
 		"profile": thickness_values
 	}
+
+def validate_centerline_in_walls(centerline_coords, wall_mask):
+	"""Additional validation to ensure centerline stays within wall boundaries"""
+	if not centerline_coords or len(centerline_coords) < 2:
+		return centerline_coords
+	
+	validated_coords = []
+	for coord in centerline_coords:
+		x, y = coord
+		# Check if point is within image bounds and in wall area
+		if (0 <= y < wall_mask.shape[0] and 0 <= x < wall_mask.shape[1] and 
+			wall_mask[y, x]):
+			validated_coords.append(coord)
+		else:
+			# Try to find a nearby valid point
+			nearest = find_nearest_valid_point(x, y, wall_mask, max_search_radius=3)
+			if nearest is not None:
+				validated_coords.append([nearest[1], nearest[0]])  # Convert back to [x, y]
+	
+	return validated_coords if len(validated_coords) >= 2 else centerline_coords
 
 def calculate_wall_length(centerline_coords):
 	"""Calculate total wall length from centerline coordinates"""
@@ -1554,6 +1646,50 @@ def extract_wall_parameters(segments, wall_mask, junctions):
 	
 	return wall_parameters
 
+def extract_wall_parameters_with_regions(all_wall_segments, wall_mask, junctions):
+	"""Extract comprehensive parameters for each wall segment with region prefixes"""
+	wall_parameters = []
+	
+	# Find wall connections
+	wall_connections = find_wall_connections([seg for seg, _ in all_wall_segments], junctions)
+	
+	for i, (segment, region_prefix) in enumerate(all_wall_segments):
+		wall_id = f"{region_prefix}W{i+1}"
+		
+		# Extract centerline coordinates with validation
+		centerline = extract_centerline_coords_with_validation(segment, wall_mask)
+		
+		# Calculate wall properties
+		length = calculate_wall_length(centerline)
+		thickness = calculate_wall_thickness(wall_mask, centerline)
+		orientation = calculate_wall_orientation(centerline)
+		
+		# Get bounding box of wall segment
+		if len(segment) > 0:
+			min_y, min_x = numpy.min(segment, axis=0)
+			max_y, max_x = numpy.max(segment, axis=0)
+			bbox = {
+				"x1": float(min_x), "y1": float(min_y),
+				"x2": float(max_x), "y2": float(max_y)
+			}
+		else:
+			bbox = {"x1": 0, "y1": 0, "x2": 0, "y2": 0}
+		
+		wall_params = {
+			"wall_id": wall_id,
+			"centerline": centerline,
+			"length_px": length,
+			"thickness": thickness,
+			"orientation_degrees": orientation,
+			"bbox": bbox,
+			"connections": wall_connections.get(wall_id, {"start_junction": None, "end_junction": None}),
+			"segment_area": float(len(segment))
+		}
+		
+		wall_parameters.append(wall_params)
+	
+	return wall_parameters
+
 @application.route('/analyze_walls', methods=['POST'])
 def analyze_wall_parameters():
 	"""Comprehensive wall parameter analysis including centerlines, thickness, and junctions"""
@@ -1570,8 +1706,19 @@ def analyze_wall_parameters():
 		# Get model predictions
 		r = _model.detect(sample, verbose=0)[0]
 		
-		# Extract wall masks
+		# Extract wall masks and door masks separately
 		wall_masks, wall_indices = extract_wall_masks(r)
+		
+		door_masks = []
+		if 'masks' in r:
+			for idx, cid in enumerate(r['class_ids']):
+				if cid == 3 and idx < r['masks'].shape[2]:
+					door_masks.append(r['masks'][:, :, idx])
+		
+		# Build a combined door mask
+		combined_door_mask = numpy.zeros((h, w), dtype=bool)
+		for dm in door_masks:
+			combined_door_mask |= dm
 		
 		if not wall_masks:
 			return jsonify({
@@ -1583,21 +1730,50 @@ def analyze_wall_parameters():
 		
 		print(f"Found {len(wall_masks)} wall regions")
 		
-		# Combine all wall masks for comprehensive analysis
+		# Process each wall mask separately to prevent cross-wall centerlines
+		all_wall_segments = []
+		all_junctions = []
 		combined_wall_mask = numpy.zeros((h, w), dtype=bool)
-		for mask in wall_masks:
-			combined_wall_mask |= mask
 		
-		# Segment walls and find junctions
-		wall_segments, junctions = segment_individual_walls(combined_wall_mask)
-		print(f"Segmented into {len(wall_segments)} individual walls with {len(junctions)} junctions")
+		for i, wall_mask in enumerate(wall_masks):
+			# Remove door areas from wall mask to avoid centerlines through openings
+			wall_mask = wall_mask & (~combined_door_mask)
+			combined_wall_mask |= wall_mask
+			
+			# Segment individual walls from this mask
+			wall_segments, junctions = segment_individual_walls(wall_mask)
+			
+			# Add wall ID prefix to distinguish between different wall regions
+			for segment in wall_segments:
+				all_wall_segments.append((segment, f"R{i+1}_"))
+			
+			# Adjust junction coordinates and add to global list
+			for junction in junctions:
+				all_junctions.append(junction)
 		
-		# Extract detailed wall parameters
-		wall_parameters = extract_wall_parameters(wall_segments, combined_wall_mask, junctions)
+		# Ensure combined_wall_mask does not include doors
+		combined_wall_mask &= (~combined_door_mask)
+
+		print(f"Segmented into {len(all_wall_segments)} individual walls with {len(all_junctions)} junctions")
+		
+		# Extract detailed wall parameters with region prefixes
+		wall_parameters = extract_wall_parameters_with_regions(all_wall_segments, combined_wall_mask, all_junctions)
 		
 		# Analyze junctions
-		wall_connections = find_wall_connections(wall_segments, junctions)
-		junction_analysis = analyze_junction_types(junctions, wall_connections)
+		wall_connections = find_wall_connections([seg for seg, _ in all_wall_segments], all_junctions)
+		junction_analysis = analyze_junction_types(all_junctions, wall_connections)
+		# Fallback junctions from wall bounding boxes if none detected
+		if len(junction_analysis) == 0:
+			wall_bboxes = [r['rois'][idx] for idx in wall_indices]
+			fallback_juncs = find_junctions_from_bboxes(wall_bboxes)
+			for jx, jy in fallback_juncs:
+				junction_analysis.append({
+					"junction_id": f"J{len(junction_analysis)+1}",
+					"position": [float(jx), float(jy)],
+					"connected_walls": [],
+					"junction_type": "corner",
+					"wall_count": 2
+				})
 		
 		# Calculate summary statistics
 		total_wall_length = sum(wall["length_px"] for wall in wall_parameters)
@@ -1752,7 +1928,20 @@ def visualize_wall_analysis():
 		# Perform wall analysis
 		wall_segments, junctions = segment_individual_walls(combined_wall_mask)
 		wall_parameters = extract_wall_parameters(wall_segments, combined_wall_mask, junctions)
-		junction_analysis = analyze_junction_types(junctions, find_wall_connections(wall_segments, junctions))
+		wall_connections_viz = find_wall_connections(wall_segments, junctions)
+		junction_analysis = analyze_junction_types(junctions, wall_connections_viz)
+		# Fallback junctions from wall bounding boxes if none detected (or very few)
+		if len(junction_analysis) < 4:  # heuristic: expect at least the four outer corners
+			wall_bboxes = [r['rois'][idx] for idx in wall_indices]
+			fallback_juncs = find_junctions_from_bboxes(wall_bboxes)
+			for jx, jy in fallback_juncs:
+				junction_analysis.append({
+					"junction_id": f"J{len(junction_analysis)+1}",
+					"position": [float(jx), float(jy)],
+					"connected_walls": [],
+					"junction_type": "corner",
+					"wall_count": 2
+				})
 		
 		# Create enhanced visualization
 		vis_image = create_wall_visualization(original_image, r, wall_parameters, junction_analysis, w, h)
@@ -1814,8 +2003,8 @@ def create_wall_visualization(original_image, model_results, wall_parameters, ju
 		2: (0, 255, 0),     # Window - Green  
 		3: (0, 0, 255)      # Door - Blue
 	}
-	
-	centerline_color = (0, 255, 255)     # Cyan for centerlines (more visible)
+
+	centerline_color = (255, 255, 0)     # Yellow for centerlines (more visible)
 	junction_color = (255, 0, 255)       # Magenta for junctions
 	text_color = (0, 0, 0)               # Black for text
 	
@@ -2001,7 +2190,7 @@ def create_wall_visualization(original_image, model_results, wall_parameters, ju
 	legend_y = 10
 	legend_items = [
 		("Walls (Red boxes)", (255, 0, 0)),
-		("Centerlines (Cyan)", centerline_color),
+		("Centerlines (Yellow)", centerline_color),
 		("Junctions (Magenta)", junction_color),
 		("Windows (Green)", (0, 255, 0)),
 		("Doors (Blue)", (0, 0, 255)),
@@ -2020,7 +2209,45 @@ def create_wall_visualization(original_image, model_results, wall_parameters, ju
 		# Draw text
 		draw.text((30, y_pos-2), text, fill=(0, 0, 0), font=legend_font)
 	
+	# After drawing centerlines (existing loop) add fallback for missing ones
+	# Draw junctions
+	for i in range(len(bboxes)):
+		if class_ids[i] != 1:
+			continue
+		# Compute simple horizontal/vertical centerline within bbox
+		y1, x1, y2, x2 = bboxes[i]
+		width_box = x2 - x1
+		height_box = y2 - y1
+		if width_box < 3 or height_box < 3:
+			continue  # skip extremely small boxes
+		# Decide orientation: longer dimension defines line direction
+		if width_box >= height_box:
+			cy = (y1 + y2) // 2
+			p_start = (x1, cy)
+			p_end = (x2, cy)
+		else:
+			cx = (x1 + x2) // 2
+			p_start = (cx, y1)
+			p_end = (cx, y2)
+		draw.line([p_start, p_end], fill=centerline_color, width=4)
+	
 	return vis_image
+
+# Fallback ordering using simple nearest-neighbor (kept for legacy calls)
+
+def order_centerline_points(points):
+    """Simple nearest-neighbor ordering kept for backward compatibility."""
+    if len(points) < 3:
+        return points
+    ordered = [points[0]]
+    remaining = points[1:]
+    while remaining:
+        current = ordered[-1]
+        # Choose the nearest remaining point
+        distances = [((p[0]-current[0])**2 + (p[1]-current[1])**2) for p in remaining]
+        idx = int(np.argmin(distances))
+        ordered.append(remaining.pop(idx))
+    return ordered
 
 if __name__ == '__main__':
 	application.debug = True
