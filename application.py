@@ -1,6 +1,8 @@
 import os
 import numpy
 import skimage.color
+import cv2
+import traceback 
 
 from numpy.lib.function_base import average
 from numpy import zeros
@@ -35,6 +37,12 @@ import sys
 from PIL import Image, ImageDraw, ImageFont
 import numpy as np
 from skimage.draw import line as skimage_line
+import time
+from symbol_detector import detect_icons_orb
+
+
+from symbol_detector import detect_icons, CLASS_MAP, DISPLAY_NAME
+from symbol_detector import detect_icons_shape
 
 # Global variables
 global _model
@@ -61,6 +69,23 @@ class PredictionConfig(Config):
 	# simplify GPU config
 	GPU_COUNT = 1
 	IMAGES_PER_GPU = 1
+	# Lower detection threshold to capture faint walls/doors
+	DETECTION_MIN_CONFIDENCE = 0.15
+	# Allow larger input images to preserve line detail
+	IMAGE_MAX_DIM = 1600
+
+
+def safe_logical_and(a, b):
+    """Safe wrapper for numpy.logical_and with proper boolean conversion"""
+    return numpy.logical_and(numpy.asarray(a, dtype=bool), numpy.asarray(b, dtype=bool))
+
+def safe_logical_or(a, b):
+    """Safe wrapper for numpy.logical_or with proper boolean conversion"""
+    return numpy.logical_or(numpy.asarray(a, dtype=bool), numpy.asarray(b, dtype=bool))
+
+def safe_logical_not(a):
+    """Safe wrapper for numpy.logical_not with proper boolean conversion"""
+    return numpy.logical_not(numpy.asarray(a, dtype=bool))
 	
 
 # Load model on startup (Flask 2.x compatible way)
@@ -81,27 +106,40 @@ def load_model():
 		print('=================model loaded successfully==============')
 
 
-def myImageLoader(imageInput):
+def myImageLoader(imageInput, enhance_for_office=False):
 	# Convert PIL image to RGB first to ensure consistent format
 	if hasattr(imageInput, 'convert'):
 		imageInput = imageInput.convert('RGB')
-	
 	image = numpy.asarray(imageInput)
 	
-	# Ensure we have a 3D array with 3 channels
-	if image.ndim == 2:
-		# Grayscale image
-		image = skimage.color.gray2rgb(image)
-	elif image.ndim == 3:
-		if image.shape[-1] == 4:
-			# RGBA -> RGB (remove alpha channel)
-			image = image[..., :3]
-		elif image.shape[-1] == 1:
-			# Single channel -> RGB
-			image = numpy.repeat(image, 3, axis=2)
-		elif image.shape[-1] != 3:
-			# Convert to RGB if not already
-			image = skimage.color.gray2rgb(image)
+	# Office plan enhancement: binarize and thicken lines
+	if enhance_for_office:
+		# Convert to grayscale
+		gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+		
+		# Apply adaptive thresholding to better handle varying line intensities
+		binary = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
+		
+		# Remove noise
+		kernel = numpy.ones((2,2), numpy.uint8)
+		binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel)
+		
+		# Dilate to thicken lines - using a larger kernel for better connectivity
+		kernel_dilate = numpy.ones((8,8), numpy.uint8)
+		dilated = cv2.dilate(binary, kernel_dilate, iterations=1)
+		
+		# Connect nearby lines that might be part of the same wall
+		kernel_close = numpy.ones((7,7), numpy.uint8)
+		dilated = cv2.morphologyEx(dilated, cv2.MORPH_CLOSE, kernel_close)
+		
+		# Convert back to black lines on white background
+		dilated = cv2.bitwise_not(dilated)
+		
+		# Enhance contrast
+		dilated = cv2.normalize(dilated, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX)
+		
+		# Convert back to 3-channel RGB
+		image = cv2.cvtColor(dilated, cv2.COLOR_GRAY2RGB)
 	
 	# Ensure the image is in the right data type and range
 	if image.dtype != numpy.uint8:
@@ -111,7 +149,7 @@ def myImageLoader(imageInput):
 			image = image.astype(numpy.uint8)
 	
 	h, w, c = image.shape
-	print(f"Processed image shape: {h}x{w}x{c}")
+	print(f"Processed image shape: {h}x{w}x{c}{' (office enhancement)' if enhance_for_office else ''}")
 	return image, w, h
 
 
@@ -409,14 +447,43 @@ def visualize_results():
 	try:
 		imagefile = Image.open(request.files['image'].stream)
 		original_image = imagefile.copy()
-		image, w, h = myImageLoader(imagefile)
-		print(f"Creating visualization for image: {h}x{w}")
+		
+		# Check if this is an office plan by looking for thin lines
+		gray = cv2.cvtColor(numpy.array(original_image), cv2.COLOR_RGB2GRAY)
+		edges = cv2.Canny(gray, 50, 150)
+		line_thickness = numpy.sum(edges > 0) / numpy.sum(edges > 0, axis=1).max()
+		is_office_plan = line_thickness < 5  # Threshold for thin lines
+		
+		image, w, h = myImageLoader(imagefile, enhance_for_office=is_office_plan)
+		print(f"Creating visualization for image: {h}x{w} {'(office plan)' if is_office_plan else ''}")
 		
 		scaled_image = mold_image(image, cfg)
 		sample = expand_dims(scaled_image, 0)
 
 		# Get model predictions
 		r = _model.detect(sample, verbose=0)[0]
+		
+		# Run icon detection and append to r
+		# ORB + homography matcher, requires at least 8 inliers
+		# 1) build a single wall_mask from all wall instances
+		wall_mask = np.zeros((h, w), dtype=np.uint8)
+		for idx, cid in enumerate(r['class_ids']):
+			if cid == 1:  # wall class
+				wall_mask[r['masks'][:,:,idx]] = 255
+
+		# 2) blank out wall pixels so ORB only sees non-wall regions
+		masked = image.copy()
+		masked[wall_mask == 255] = 255
+
+		icon_dets = detect_icons_orb(masked, debug=True, min_inliers=8)
+
+		for bbox, cid, score in icon_dets:
+			if 'rois' in r:
+				r['rois'] = numpy.vstack([r['rois'], bbox])
+			else:
+				r['rois'] = numpy.array([bbox])
+			r['class_ids'] = numpy.append(r['class_ids'], cid)
+			r['scores'] = numpy.append(r['scores'], score)
 		
 		# Create visualization
 		vis_image = createVisualization(original_image, r, w, h)
@@ -474,7 +541,14 @@ def createVisualization(original_image, model_results, image_width, image_height
 		3: (0, 0, 255)      # Door - Blue
 	}
 	
-	class_names = {1: 'Wall', 2: 'Window', 3: 'Door'}
+	# Add icons
+	icon_colors = {
+		4: (255, 165, 0),   # Orange for cameras
+		5: (128, 0, 128)    # Purple for sensors
+	}
+	colors.update(icon_colors)
+	
+	class_names = {1:'Wall', 2:'Window', 3:'Door', 4:'Camera', 5:'Sensor'}
 	
 	# Draw each detected object
 	bboxes = model_results['rois']
@@ -554,6 +628,7 @@ def createVisualization(original_image, model_results, image_width, image_height
 				
 				if 'arrow_points' in locals():
 					draw.polygon(arrow_points, fill=arrow_color)
+					del arrow_points  # Clean up for next iteration
 		
 		# Draw label with confidence (enhanced for doors)
 		if class_id == 3:  # door
@@ -822,77 +897,63 @@ def saveAccuracyAnalysis(accuracy_data, test_num):
 		return None
 
 def analyzeDoorOrientation(door_mask, door_bbox, image_width, image_height):
-	"""
-	Analyze door orientation and opening direction based on geometric features
-	This is a post-processing approach using the detected door mask and position
-	"""
-	y1, x1, y2, x2 = door_bbox
-	door_width = x2 - x1
-	door_height = y2 - y1
-	
-	# Determine if door is horizontal or vertical based on aspect ratio
-	is_horizontal = door_width > door_height
-	
-	# Extract door region from mask (ensure integer indices)
-	door_region = door_mask[int(y1):int(y2), int(x1):int(x2)] if door_mask is not None else None
-	
-	orientation_analysis = {
-		"door_type": "horizontal" if is_horizontal else "vertical",
-		"estimated_swing": "unknown",
-		"hinge_side": "unknown", 
-		"confidence": 0.0,
-		"analysis_method": "geometric_inference"
-	}
-	
-	if door_region is not None:
-		# Analyze the door mask shape for opening indicators
-		door_center_x = (x1 + x2) / 2
-		door_center_y = (y1 + y2) / 2
-		
-		# For horizontal doors (most common in floor plans)
-		if is_horizontal:
-			# Check door position relative to image bounds to infer swing
-			distance_to_top = y1
-			distance_to_bottom = image_height - y2
-			distance_to_left = x1  
-			distance_to_right = image_width - x2
-			
-			# Heuristic: doors usually open into the larger space
-			if distance_to_top > distance_to_bottom:
-				orientation_analysis.update({
-					"estimated_swing": "opens_upward",
-					"hinge_side": "bottom_edge",
-					"confidence": 0.6
-				})
-			else:
-				orientation_analysis.update({
-					"estimated_swing": "opens_downward", 
-					"hinge_side": "top_edge",
-					"confidence": 0.6
-				})
-		
-		# For vertical doors
-		else:
-			if door_center_x < image_width / 2:
-				orientation_analysis.update({
-					"estimated_swing": "opens_rightward",
-					"hinge_side": "left_edge", 
-					"confidence": 0.6
-				})
-			else:
-				orientation_analysis.update({
-					"estimated_swing": "opens_leftward",
-					"hinge_side": "right_edge",
-					"confidence": 0.6
-				})
-		
-		# Analyze mask density for additional clues
-		if hasattr(door_region, 'shape') and door_region.size > 0:
-			mask_density = numpy.sum(door_region) / door_region.size
-			if mask_density > 0.7:
-				orientation_analysis["confidence"] = min(0.8, orientation_analysis["confidence"] + 0.2)
-	
-	return orientation_analysis
+    """Determine door swing direction using door mask geometry (leaf + arc).
+    Returns dict with door_type (horizontal/vertical), estimated_swing, hinge_side, confidence.
+    """
+    orientation_analysis = {"door_type": "unknown", "estimated_swing": "unknown", "hinge_side": "unknown", "confidence": 0.3, "analysis_method": "geometric_arc"}
+    try:
+        if door_mask is None:
+            return orientation_analysis
+        # Ensure binary uint8 mask
+        dm = (door_mask.astype("uint8") * 255)
+        dm = cv2.morphologyEx(dm, cv2.MORPH_CLOSE, numpy.ones((3,3), numpy.uint8))
+        contours,_ = cv2.findContours(dm, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not contours:
+            raise ValueError("no contour")
+        cnt = max(contours, key=cv2.contourArea)
+        (cx,cy),(w_box,h_box),theta = cv2.minAreaRect(cnt)
+        vertical_leaf = h_box > w_box
+        orientation_analysis["door_type"] = "horizontal" if vertical_leaf else "vertical"
+        # Straight-edge mask
+        edge_mask = numpy.zeros_like(dm)
+        box_pts = cv2.boxPoints(((cx,cy),(w_box,h_box),theta)).astype(int)
+        cv2.drawContours(edge_mask, [box_pts], -1, 255, 1)
+        dist = cv2.distanceTransform(255-edge_mask, cv2.DIST_L2, 3)
+        arc_pixels = safe_logical_and((dm > 0).astype(bool), (dist > 2).astype(bool))
+        # FIXED: Check for arc pixels properly
+        if numpy.count_nonzero(arc_pixels) == 0:
+            raise ValueError("no arc")
+        ys,xs = numpy.nonzero(arc_pixels)
+        xc_arc, yc_arc = float(xs.mean()), float(ys.mean())
+        vec_x, vec_y = xc_arc - cx, yc_arc - cy
+        if vertical_leaf:
+            # Door opens up/down (horizontal door)
+            if vec_y > 0:
+                orientation_analysis.update({"estimated_swing":"opens_downward","hinge_side":"top_edge"})
+            else:
+                orientation_analysis.update({"estimated_swing":"opens_upward","hinge_side":"bottom_edge"})
+        else:
+            # Door opens left/right (vertical door)
+            if vec_x > 0:
+                orientation_analysis.update({"estimated_swing":"opens_rightward","hinge_side":"left_edge"})
+            else:
+                orientation_analysis.update({"estimated_swing":"opens_leftward","hinge_side":"right_edge"})
+        orientation_analysis["confidence"] = 0.9
+        return orientation_analysis
+    except Exception:
+        # Fallback to simple image-center heuristic
+        (y1,x1,y2,x2) = door_bbox
+        vertical_door = (y2-y1) > (x2-x1)
+        orientation_analysis["door_type"] = "vertical" if vertical_door else "horizontal"
+        orientation_analysis["analysis_method"] = "fallback"
+        if vertical_door:
+            orientation_analysis["estimated_swing"] = "opens_leftward" if (x1+x2)/2 < image_width/2 else "opens_rightward"
+            orientation_analysis["hinge_side"] = "left_edge" if orientation_analysis["estimated_swing"].endswith("leftward") else "right_edge"
+        else:
+            orientation_analysis["estimated_swing"] = "opens_upward" if (y1+y2)/2 > image_height/2 else "opens_downward"
+            orientation_analysis["hinge_side"] = "bottom_edge" if orientation_analysis["estimated_swing"].endswith("upward") else "top_edge"
+        orientation_analysis["confidence"] = 0.4
+        return orientation_analysis
 
 def enhancedDoorAnalysis(door_objects, masks, door_indices, image_width, image_height):
 	"""
@@ -1178,110 +1239,115 @@ def extract_wall_masks(model_results):
 	return wall_masks, wall_indices
 
 def find_junction_points(skeleton):
-	"""Find junction points where multiple walls meet - only real intersections"""
-	junctions = []
-	h, w = skeleton.shape
-	
-	# Check each point in skeleton with a more restrictive approach
-	for y in range(2, h-2):  # Stay further from edges
-		for x in range(2, w-2):
-			if skeleton[y, x]:
-				# Count connected components in 3x3 neighborhood
-				# A true junction should connect 3 or more separate line segments
-				neighbors = skeleton[y-1:y+2, x-1:x+2].copy()
-				neighbors[1, 1] = False  # Remove center pixel
-				
-				# Label connected components in the neighborhood
-				from skimage.measure import label
-				labeled_neighbors = label(neighbors, connectivity=2)
-				num_components = numpy.max(labeled_neighbors)
-				
-				# Only consider it a junction if it connects 3+ separate components
-				if num_components >= 3:
-					junctions.append((x, y))
-	
-	# More aggressive duplicate removal (within 15 pixels)
-	filtered_junctions = []
-	for junction in junctions:
-		is_duplicate = False
-		for existing in filtered_junctions:
-			dist = ((junction[0] - existing[0])**2 + (junction[1] - existing[1])**2)**0.5
-			if dist < 15:  # Larger radius to remove more duplicates
-				is_duplicate = True
-				break
-		if not is_duplicate:
-			filtered_junctions.append(junction)
-	
-	return filtered_junctions
+    """Find junction points where multiple walls meet - only real intersections"""
+    junctions = []
+    h, w = skeleton.shape
+    
+    # Check each point in skeleton with a more restrictive approach
+    for y in range(2, h-2):  # Stay further from edges
+        for x in range(2, w-2):
+            if skeleton[y, x]:  # FIXED: removed numpy.any()
+                # Count connected components in 3x3 neighborhood
+                # A true junction should connect 3 or more separate line segments
+                neighbors = skeleton[y-1:y+2, x-1:x+2].copy()
+                neighbors[1, 1] = False  # Remove center pixel
+                
+                # Label connected components in the neighborhood
+                from skimage.measure import label
+                labeled_neighbors = label(neighbors, connectivity=2)
+                num_components = numpy.max(labeled_neighbors)
+                
+                # Only consider it a junction if it connects 3+ separate components
+                if num_components >= 3:
+                    junctions.append((x, y))
+    
+    # More aggressive duplicate removal (within 15 pixels)
+    filtered_junctions = []
+    for junction in junctions:
+        is_duplicate = False
+        for existing in filtered_junctions:
+            dist = ((junction[0] - existing[0])**2 + (junction[1] - existing[1])**2)**0.5
+            if dist < 15:  # Larger radius to remove more duplicates
+                is_duplicate = True
+                break
+        if not is_duplicate:
+            filtered_junctions.append(junction)
+    
+    return filtered_junctions
 
 def find_junction_points_simple(skeleton):
-	"""Ultra-conservative junction detection - only real intersections"""
-	from scipy.ndimage import binary_erosion, binary_dilation
-	
-	# Clean the skeleton first to remove noise
-	# Erode then dilate to remove small artifacts
-	cleaned_skeleton = binary_erosion(skeleton, iterations=1)
-	cleaned_skeleton = binary_dilation(cleaned_skeleton, iterations=1)
-	
-	junctions = []
-	h, w = cleaned_skeleton.shape
-	
-	# Only check every 5th pixel to avoid noise
-	for y in range(5, h-5, 5):
-		for x in range(5, w-5, 5):
-			if cleaned_skeleton[y, x]:
-				# Check in a larger 5x5 neighborhood to be more stable
-				region = cleaned_skeleton[y-2:y+3, x-2:x+3]
-				
-				# Count distinct line directions
-				# Look for pixels in cardinal and diagonal directions
-				directions = [
-					region[0, 2],  # North
-					region[4, 2],  # South  
-					region[2, 0],  # West
-					region[2, 4],  # East
-					region[0, 0],  # NW
-					region[0, 4],  # NE
-					region[4, 0],  # SW
-					region[4, 4]   # SE
-				]
-				
-				# Count how many directions have connections
-				direction_count = sum(directions)
-				
-				# Only consider it a junction if it connects 3+ directions
-				# AND is far from image boundaries
-				if direction_count >= 3 and x > 20 and x < w-20 and y > 20 and y < h-20:
-					junctions.append((x, y))
-	
-	# Very aggressive duplicate removal (within 30 pixels)
-	filtered_junctions = []
-	for junction in junctions:
-		is_duplicate = False
-		for existing in filtered_junctions:
-			dist = ((junction[0] - existing[0])**2 + (junction[1] - existing[1])**2)**0.5
-			if dist < 30:  # Much larger radius
-				is_duplicate = True
-				break
-		if not is_duplicate:
-			filtered_junctions.append(junction)
-	
-	# Final filter: only keep junctions that are actually meaningful
-	# Limit to maximum 20 junctions for the entire floor plan
-	if len(filtered_junctions) > 20:
-		# Keep only the strongest junctions (those with most connections)
-		junction_scores = []
-		for jx, jy in filtered_junctions:
-			if 0 <= jy < h and 0 <= jx < w:
-				region = cleaned_skeleton[max(0,jy-3):min(h,jy+4), max(0,jx-3):min(w,jx+4)]
-				score = numpy.sum(region)
-				junction_scores.append((score, (jx, jy)))
-		
-		# Sort by score and keep top 20
-		junction_scores.sort(reverse=True)
-		filtered_junctions = [junction for score, junction in junction_scores[:20]]
-	
-	return filtered_junctions
+    """Ultra-conservative junction detection - only real intersections"""
+    from scipy.ndimage import binary_erosion, binary_dilation
+    import numpy as np
+    
+    # Clean the skeleton first to remove noise
+    # Erode then dilate to remove small artifacts
+    cleaned_skeleton = binary_erosion(skeleton.astype(bool), iterations=1)
+    cleaned_skeleton = binary_dilation(cleaned_skeleton, iterations=1)
+    
+    junctions = []
+    h, w = cleaned_skeleton.shape
+    
+    # Only check every 5th pixel to avoid noise
+    for y in range(5, h-5, 5):
+        for x in range(5, w-5, 5):
+            if cleaned_skeleton[y, x].item():   # FIXED: removed numpy.any()
+                # Check in a larger 5x5 neighborhood to be more stable
+                region = cleaned_skeleton[y-2:y+3, x-2:x+3]
+                
+                # Count distinct line directions
+                # Look for pixels in cardinal and diagonal directions
+                directions = [
+    							bool(region[0, 2].item()),  # North
+    							bool(region[4, 2].item()),  # South  
+    							bool(region[2, 0].item()),  # West
+    							bool(region[2, 4].item()),  # East
+    							bool(region[0, 0].item()),  # NW
+    							bool(region[0, 4].item()),  # NE
+    							bool(region[4, 0].item()),  # SW
+    							bool(region[4, 4].item())   # SE
+								]
+                
+                # Count how many directions have connections
+                direction_count = sum(directions)
+                
+                # Only consider it a junction if it connects 3+ directions
+                # AND is far from image boundaries
+                if direction_count >= 3 and x > 20 and x < w-20 and y > 20 and y < h-20:
+                    junctions.append((x, y))
+    
+    # Very aggressive duplicate removal (within 30 pixels)
+    filtered_junctions = []
+    for junction in junctions:
+        is_duplicate = False
+        for existing in filtered_junctions:
+            dist = np.sqrt(((junction[0] - existing[0])**2 + (junction[1] - existing[1])**2))
+            if dist < 30:  # Much larger radius
+                is_duplicate = True
+                break
+        if not is_duplicate:
+            filtered_junctions.append(junction)
+    
+    # Final filter: only keep junctions that are actually meaningful
+    # Limit to maximum 20 junctions for the entire floor plan
+    if len(filtered_junctions) > 20:
+        # Keep only the strongest junctions (those with most connections)
+        junction_scores = []
+        for jx, jy in filtered_junctions:
+            if 0 <= jy < h and 0 <= jx < w:
+                y_start = max(0, jy-3)
+                y_end = min(h, jy+4)
+                x_start = max(0, jx-3)
+                x_end = min(w, jx+4)
+                region = cleaned_skeleton[y_start:y_end, x_start:x_end]
+                score = numpy.sum(region)
+                junction_scores.append((score, (jx, jy)))
+        
+        # Sort by score and keep top 20
+        junction_scores.sort(reverse=True)
+        filtered_junctions = [junction for score, junction in junction_scores[:20]]
+    
+    return filtered_junctions
 
 def find_junctions_from_bboxes(wall_bboxes):
 	"""Alternative: Find junctions from wall bounding box intersections"""
@@ -1319,27 +1385,40 @@ def keep_largest_component(binary_img):
     labeled = label(binary_img)
     if labeled.max() == 0:
         return binary_img  # nothing to keep
-    largest_cc = (labeled == numpy.argmax(numpy.bincount(labeled.flat)[1:]) + 1)
+    largest_cc = numpy.equal(labeled, numpy.argmax(numpy.bincount(labeled.flat)[1:]) + 1).astype(bool)
     return largest_cc
 
 def segment_individual_walls(wall_mask):
     """Segment connected wall regions into individual wall segments with robust per-region processing."""
-    cleaned_mask = remove_small_objects(wall_mask, min_size=50)
+    from skimage.morphology import remove_small_objects, skeletonize
+    from skimage.measure import label, regionprops
+    import numpy as np
+    
+    cleaned_mask = remove_small_objects(wall_mask.astype(bool), min_size=50)
     labeled_regions = label(cleaned_mask)
     segments = []
     all_junctions = []
     num_regions = labeled_regions.max()
+    
     for region_idx in range(1, num_regions + 1):
         region_mask = (labeled_regions == region_idx)
-        if np.sum(region_mask) < 20:
+        if numpy.sum(region_mask) < 20:
             continue
+            
         skeleton = skeletonize(region_mask)
-        skeleton &= region_mask
+        skeleton = safe_logical_and(skeleton.astype(bool), region_mask.astype(bool))  # FIXED: explicit bool casting
+        
         junctions = find_junction_points_simple(skeleton)
         all_junctions.extend(junctions)
+        
         skeleton_segmented = skeleton.copy()
         for jx, jy in junctions:
-            skeleton_segmented[max(0, jy-1):min(skeleton.shape[0], jy+2), max(0, jx-1):min(skeleton.shape[1], jx+2)] = False
+            y_start = max(0, jy-1)
+            y_end = min(skeleton.shape[0], jy+2)
+            x_start = max(0, jx-1)
+            x_end = min(skeleton.shape[1], jx+2)
+            skeleton_segmented[y_start:y_end, x_start:x_end] = False
+            
         labeled_skeleton = label(skeleton_segmented)
         for region in regionprops(labeled_skeleton):
             if region.area > 5:
@@ -1348,44 +1427,47 @@ def segment_individual_walls(wall_mask):
                 filtered_coords = validate_centerline_boundary(seg_coords, region_mask)
                 if len(filtered_coords) >= 2:
                     segments.append(filtered_coords)
+    
     return segments, all_junctions
 
+
 def validate_centerline_boundary(segment_coords, wall_mask):
-	"""Validate that centerline points stay within wall boundaries"""
-	validated_coords = []
-	
-	for coord in segment_coords:
-		y, x = coord
-		# Check if the point is within the wall mask
-		if 0 <= y < wall_mask.shape[0] and 0 <= x < wall_mask.shape[1]:
-			if wall_mask[y, x]:
-				validated_coords.append(coord)
-			else:
-				# If point is outside wall, try to find nearest valid point
-				nearest_valid = find_nearest_valid_point(x, y, wall_mask)
-				if nearest_valid is not None:
-					validated_coords.append(nearest_valid)
-		else:
-			# Point is outside image bounds, skip it
-			continue
-	
-	return numpy.array(validated_coords) if validated_coords else numpy.array([])
+    """Validate that centerline points stay within wall boundaries"""
+    validated_coords = []
+    
+    for coord in segment_coords:
+        y, x = coord
+        # Check if the point is within the wall mask
+        if 0 <= y < wall_mask.shape[0] and 0 <= x < wall_mask.shape[1]:
+            if wall_mask[y, x].item():  # FIXED: removed numpy.any()
+                validated_coords.append(coord)
+            else:
+                # If point is outside wall, try to find nearest valid point
+                nearest_valid = find_nearest_valid_point(x, y, wall_mask)
+                if nearest_valid is not None:
+                    validated_coords.append(nearest_valid)
+        else:
+            # Point is outside image bounds, skip it
+            continue
+    
+    return numpy.array(validated_coords) if validated_coords else numpy.array([])
+
 
 def find_nearest_valid_point(x, y, wall_mask, max_search_radius=5):
-	"""Find the nearest valid wall point within a search radius"""
-	height, width = wall_mask.shape
-	
-	for radius in range(1, max_search_radius + 1):
-		for dy in range(-radius, radius + 1):
-			for dx in range(-radius, radius + 1):
-				# Check if this is a point on the radius boundary
-				if abs(dx) == radius or abs(dy) == radius:
-					new_y, new_x = y + dy, x + dx
-					if (0 <= new_y < height and 0 <= new_x < width and 
-						wall_mask[new_y, new_x]):
-						return (new_y, new_x)
-	
-	return None
+    """Find the nearest valid wall point within a search radius"""
+    height, width = wall_mask.shape
+    
+    for radius in range(1, max_search_radius + 1):
+        for dy in range(-radius, radius + 1):
+            for dx in range(-radius, radius + 1):
+                # Check if this is a point on the radius boundary
+                if abs(dx) == radius or abs(dy) == radius:
+                    new_y, new_x = y + dy, x + dx
+                    if (0 <= new_y < height and 0 <= new_x < width and 
+     			        bool(wall_mask[new_y, new_x].item())): # FIXED: removed numpy.any()
+                        return (new_y, new_x)
+    
+    return None
 
 def extract_centerline_coords(segment_coords):
 	"""Legacy extractor that now leverages connectivity ordering."""
@@ -1438,7 +1520,9 @@ def extract_centerline_coords_with_validation(segment_coords, wall_mask, min_len
         p1 = ordered_centerline[i-1]
         p2 = ordered_centerline[i]
         rr, cc = skimage_line(p1[1], p1[0], p2[1], p2[0])
-        if np.all([0 <= y < wall_mask.shape[0] and 0 <= x < wall_mask.shape[1] and wall_mask[y, x] for y, x in zip(rr, cc)]):
+        # FIXED: simplified boolean array comparison
+        points_valid = [(0 <= y < wall_mask.shape[0] and 0 <= x < wall_mask.shape[1] and wall_mask[y, x]) for y, x in zip(rr, cc)]
+        if numpy.all(points_valid):
             if not current_path:
                 current_path.append(p1)
             current_path.append(p2)
@@ -1480,24 +1564,24 @@ def calculate_wall_thickness(wall_mask, centerline_coords):
 	}
 
 def validate_centerline_in_walls(centerline_coords, wall_mask):
-	"""Additional validation to ensure centerline stays within wall boundaries"""
-	if not centerline_coords or len(centerline_coords) < 2:
-		return centerline_coords
-	
-	validated_coords = []
-	for coord in centerline_coords:
-		x, y = coord
-		# Check if point is within image bounds and in wall area
-		if (0 <= y < wall_mask.shape[0] and 0 <= x < wall_mask.shape[1] and 
-			wall_mask[y, x]):
-			validated_coords.append(coord)
-		else:
-			# Try to find a nearby valid point
-			nearest = find_nearest_valid_point(x, y, wall_mask, max_search_radius=3)
-			if nearest is not None:
-				validated_coords.append([nearest[1], nearest[0]])  # Convert back to [x, y]
-	
-	return validated_coords if len(validated_coords) >= 2 else centerline_coords
+    """Additional validation to ensure centerline stays within wall boundaries"""
+    if not centerline_coords or len(centerline_coords) < 2:
+        return centerline_coords
+    
+    validated_coords = []
+    for coord in centerline_coords:
+        x, y = coord
+        # Check if point is within image bounds and in wall area
+        if (0 <= y < wall_mask.shape[0] and 0 <= x < wall_mask.shape[1] and 
+    bool(wall_mask[y, x])): # FIXED: removed numpy.any()
+            validated_coords.append(coord)
+        else:
+            # Try to find a nearby valid point
+            nearest = find_nearest_valid_point(x, y, wall_mask, max_search_radius=3)
+            if nearest is not None:
+                validated_coords.append([nearest[1], nearest[0]])  # Convert back to [x, y]
+    
+    return validated_coords if len(validated_coords) >= 2 else centerline_coords
 
 def calculate_wall_length(centerline_coords):
 	"""Calculate total wall length from centerline coordinates"""
@@ -1697,8 +1781,15 @@ def analyze_wall_parameters():
 	
 	try:
 		imagefile = Image.open(request.files['image'].stream)
-		image, w, h = myImageLoader(imagefile)
-		print(f"Analyzing wall parameters for image: {h}x{w}")
+		# Detect if this is an office plan (thin lines)
+		img_rgb_tmp = imagefile.copy().convert('RGB')
+		gray_tmp = cv2.cvtColor(numpy.array(img_rgb_tmp), cv2.COLOR_RGB2GRAY)
+		edges_tmp = cv2.Canny(gray_tmp, 50, 150)
+		avg_col = numpy.mean(numpy.sum(edges_tmp > 0, axis=0))
+		avg_row = numpy.mean(numpy.sum(edges_tmp > 0, axis=1))
+		is_office_plan = max(avg_col, avg_row) < 7  # heuristic for thin lines
+		image, w, h = myImageLoader(imagefile, enhance_for_office=is_office_plan)
+		print(f"Analyzing wall parameters for image: {h}x{w} {'(office plan)' if is_office_plan else ''}")
 		
 		scaled_image = mold_image(image, cfg)
 		sample = expand_dims(scaled_image, 0)
@@ -1718,7 +1809,11 @@ def analyze_wall_parameters():
 		# Build a combined door mask
 		combined_door_mask = numpy.zeros((h, w), dtype=bool)
 		for dm in door_masks:
-			combined_door_mask |= dm
+			# Dilate door mask to cover regions near door edges, preventing centerline crossing
+			dilated_dm = cv2.dilate(dm.astype(numpy.uint8), numpy.ones((15,15), numpy.uint8), iterations=1).astype(bool)
+			# enlarge buffer further to ensure no wall pixels remain near doors
+			dilated_dm = cv2.dilate(dilated_dm.astype(numpy.uint8), numpy.ones((35,35), numpy.uint8), iterations=1).astype(bool)
+			combined_door_mask = safe_logical_or(combined_door_mask.astype(bool), dilated_dm.astype(bool))
 		
 		if not wall_masks:
 			return jsonify({
@@ -1737,8 +1832,8 @@ def analyze_wall_parameters():
 		
 		for i, wall_mask in enumerate(wall_masks):
 			# Remove door areas from wall mask to avoid centerlines through openings
-			wall_mask = wall_mask & (~combined_door_mask)
-			combined_wall_mask |= wall_mask
+			wall_mask = safe_logical_and(wall_mask, safe_logical_not(combined_door_mask))
+			combined_wall_mask = safe_logical_or(combined_wall_mask.astype(bool), wall_mask.astype(bool))
 			
 			# Segment individual walls from this mask
 			wall_segments, junctions = segment_individual_walls(wall_mask)
@@ -1752,7 +1847,7 @@ def analyze_wall_parameters():
 				all_junctions.append(junction)
 		
 		# Ensure combined_wall_mask does not include doors
-		combined_wall_mask &= (~combined_door_mask)
+		combined_wall_mask = safe_logical_and(combined_wall_mask.astype(bool), numpy.logical_not(combined_door_mask.astype(bool)))  # Fixed boolean operation
 
 		print(f"Segmented into {len(all_wall_segments)} individual walls with {len(all_junctions)} junctions")
 		
@@ -1905,31 +2000,124 @@ def visualize_wall_analysis():
 	try:
 		imagefile = Image.open(request.files['image'].stream)
 		original_image = imagefile.copy()
-		image, w, h = myImageLoader(imagefile)
-		print(f"Creating wall analysis visualization for image: {h}x{w}")
+		# Office plan detection
+		img_rgb_tmp2 = original_image.convert('RGB')
+		gray_tmp = cv2.cvtColor(numpy.array(img_rgb_tmp2), cv2.COLOR_RGB2GRAY)
+		edges_tmp = cv2.Canny(gray_tmp, 50, 150)
+		avg_col = numpy.mean(numpy.sum(edges_tmp > 0, axis=0))
+		avg_row = numpy.mean(numpy.sum(edges_tmp > 0, axis=1))
+		is_office_plan = max(avg_col, avg_row) < 7
+		image, w, h = myImageLoader(imagefile, enhance_for_office=is_office_plan)
+		print(f"Creating wall analysis visualization for image: {h}x{w} {'(office plan)' if is_office_plan else ''}")
 		
+		# --- timing start ---
+		t0 = time.time()
+		# Preprocess for model
 		scaled_image = mold_image(image, cfg)
 		sample = expand_dims(scaled_image, 0)
-
-		# Get model predictions
+		print(f"Time - preprocessing: {time.time()-t0:.2f}s")
+		
+		# Model detection
+		t0 = time.time()
 		r = _model.detect(sample, verbose=0)[0]
+
+		# 1) Build a mask of all wall/window/door pixels
+		wall_mask = np.zeros((h, w), dtype=np.uint8)
+		for idx, cid in enumerate(r['class_ids']):
+			if cid in (1, 2, 3):  # 1=wall, 2=window, 3=door
+				wall_mask[r['masks'][:, :, idx]] = 255
+
+		# 2) Blank out those regions so template‐matching ignores them
+		orig_arr   = image.copy()          # image is an H×W×3 uint8 array
+		masked_arr = orig_arr.copy()
+		masked_arr[wall_mask == 255] = 255
+
+		# 3) Run template matcher on the masked image
+		t0 = time.time()
+		icon_dets = detect_icons_orb(masked_arr, debug=True, min_inliers=8)
+		
+
+		# 4) Prune any detections that overlap heavily with walls/windows/doors
+		cleaned = []
+		for bbox, cid, score in icon_dets:
+			y1, x1, y2, x2 = map(int, bbox)
+			region = wall_mask[y1:y2, x1:x2]
+			overlap = float(np.count_nonzero(region)) / ((y2 - y1) * (x2 - x1))
+			if overlap < 0.3:
+				cleaned.append((bbox, cid, score))
+		icon_dets = cleaned
+
+		# 5) Merge the surviving icon boxes back into your Mask R-CNN results
+		for bbox, cid, score in icon_dets:
+			if 'rois' in r:
+				r['rois']      = np.vstack([r['rois'],      bbox])
+			else:
+				r['rois']      = np.array([bbox])
+			r['class_ids'] = np.append(r['class_ids'], cid)
+			r['scores']    = np.append(r['scores'],    score)
+
+
+		
+		
+		
+		# Append icon detections (camera, sensor) via shape analysis (template-free)
+		t0 = time.time()
+		icon_shape_dets = detect_icons_shape(orig_arr, debug=True)
+		print(f"Detected {len(icon_shape_dets)} icons via shape analysis")
+		for bbox, cid, score in icon_shape_dets:
+			if 'rois' in r:
+				r['rois'] = numpy.vstack([r['rois'], bbox])
+			else:
+				r['rois'] = numpy.array([bbox])
+			r['class_ids'] = numpy.append(r['class_ids'], cid)
+			r['scores'] = numpy.append(r['scores'], score)
+		print(f"Time - icon shape analysis: {time.time()-t0:.2f}s")
 		
 		# Extract wall masks and perform analysis
+		t0 = time.time()
 		wall_masks, wall_indices = extract_wall_masks(r)
-		
-		if not wall_masks:
-			return jsonify({"error": "No walls detected for visualization"}), 400
-		
-		# Combine wall masks
+		print(f"Extracted {len(wall_masks)} wall masks from model output")
 		combined_wall_mask = numpy.zeros((h, w), dtype=bool)
 		for mask in wall_masks:
-			combined_wall_mask |= mask
+			combined_wall_mask = safe_logical_or(combined_wall_mask.astype(bool), mask.astype(bool))
 		
-		# Perform wall analysis
+		# Build combined door mask (dilated door masks + expanded bounding boxes)
+		combined_door_mask = numpy.zeros((h, w), dtype=bool)
+		for idx, cid in enumerate(r['class_ids']):
+			if cid == 3:
+				# Ensure bbox coordinates are ints for slicing
+				bbox = r['rois'][idx]
+				y1, x1, y2, x2 = [int(round(v)) for v in bbox]
+				# Add mask if available
+				if 'masks' in r and idx < r['masks'].shape[2]:
+					dm = r['masks'][:, :, idx]
+					dilated_dm = cv2.dilate(dm.astype(numpy.uint8), numpy.ones((15,15), numpy.uint8), iterations=1).astype(bool)
+					# enlarge buffer further to ensure no wall pixels remain near doors
+					dilated_dm = cv2.dilate(dilated_dm.astype(numpy.uint8), numpy.ones((35,35), numpy.uint8), iterations=1).astype(bool)
+					combined_door_mask = safe_logical_or(combined_door_mask.astype(bool), dilated_dm.astype(bool))
+				# Add expanded bounding box area (with margin)
+				margin = 40
+				x1e = max(0, x1 - margin)
+				y1e = max(0, y1 - margin)
+				x2e = min(w-1, x2 + margin)
+				y2e = min(h-1, y2 + margin)
+				temp_mask = numpy.zeros_like(combined_door_mask)
+				temp_mask[y1e:y2e+1, x1e:x2e+1] = True
+				combined_door_mask = safe_logical_or(combined_door_mask, temp_mask)
+
+		
+		# Remove door areas from combined wall mask
+		combined_wall_mask = safe_logical_and(combined_wall_mask.astype(bool), numpy.logical_not(combined_door_mask.astype(bool)))
+		print("Combined wall mask ready; starting skeletonisation & segment extraction …")
 		wall_segments, junctions = segment_individual_walls(combined_wall_mask)
+		print(f"Found {len(wall_segments)} wall segments and {len(junctions)} raw junctions")
 		wall_parameters = extract_wall_parameters(wall_segments, combined_wall_mask, junctions)
+		print(f"Computed parameters for {len(wall_parameters)} walls")
 		wall_connections_viz = find_wall_connections(wall_segments, junctions)
 		junction_analysis = analyze_junction_types(junctions, wall_connections_viz)
+		print(f"Final junction list contains {len(junction_analysis)} junctions")
+		print(f"Time - wall segmentation & analysis: {time.time()-t0:.2f}s")
+		
 		# Fallback junctions from wall bounding boxes if none detected (or very few)
 		if len(junction_analysis) < 4:  # heuristic: expect at least the four outer corners
 			wall_bboxes = [r['rois'][idx] for idx in wall_indices]
@@ -1944,7 +2132,10 @@ def visualize_wall_analysis():
 				})
 		
 		# Create enhanced visualization
+		t0 = time.time()
 		vis_image = create_wall_visualization(original_image, r, wall_parameters, junction_analysis, w, h)
+		print(f"Time - visualization drawing: {time.time()-t0:.2f}s")
+		print("Visualization image drawn; saving files …")
 		
 		# Get next test number for naming
 		test_num = getNextTestNumber()
@@ -1982,7 +2173,7 @@ def visualize_wall_analysis():
 		})
 		
 	except Exception as e:
-		print(f"Error creating wall visualization: {str(e)}")
+		traceback.print_exc() 
 		return jsonify({"error": str(e)}), 500
 
 def create_wall_visualization(original_image, model_results, wall_parameters, junction_analysis, image_width, image_height):
@@ -2001,14 +2192,15 @@ def create_wall_visualization(original_image, model_results, wall_parameters, ju
 	colors = {
 		1: (255, 0, 0),     # Wall - Red
 		2: (0, 255, 0),     # Window - Green  
-		3: (0, 0, 255)      # Door - Blue
+		3: (0, 0, 255),     # Door - Blue
+		4: (255, 165, 0)    # Camera - Orange
 	}
 
 	centerline_color = (255, 255, 0)     # Yellow for centerlines (more visible)
 	junction_color = (255, 0, 255)       # Magenta for junctions
 	text_color = (0, 0, 0)               # Black for text
 	
-	class_names = {1: 'Wall', 2: 'Window', 3: 'Door'}
+	class_names = {1: 'Wall', 2: 'Window', 3: 'Door', 4: 'Camera'}
 	
 	# First draw regular detection boxes
 	bboxes = model_results['rois']
@@ -2033,62 +2225,10 @@ def create_wall_visualization(original_image, model_results, wall_parameters, ju
 			door_mask = masks[:, :, i] if i < masks.shape[2] else None
 			orientation = analyzeDoorOrientation(door_mask, bbox, image_width, image_height)
 			
-			# Draw door orientation arrow
-			center_x = (x1 + x2) / 2
-			center_y = (y1 + y2) / 2
-			arrow_length = min((x2 - x1), (y2 - y1)) * 0.4
-			
-			# Determine arrow direction based on estimated swing
-			swing = orientation.get("estimated_swing", "")
-			arrow_color = (255, 255, 0)  # Yellow arrow
-			
-			if "upward" in swing:
-				arrow_end = (center_x, center_y - arrow_length)
-			elif "downward" in swing:
-				arrow_end = (center_x, center_y + arrow_length)
-			elif "leftward" in swing:
-				arrow_end = (center_x - arrow_length, center_y)
-			elif "rightward" in swing:
-				arrow_end = (center_x + arrow_length, center_y)
-			else:
-				arrow_end = (center_x, center_y)  # No arrow for unknown
-			
-			# Draw arrow line
-			if arrow_end != (center_x, center_y):
-				draw.line([(center_x, center_y), arrow_end], fill=arrow_color, width=3)
-				
-				# Draw arrow head (simple triangle)
-				head_size = 8
-				if "upward" in swing:
-					arrow_points = [
-						(arrow_end[0], arrow_end[1]),
-						(arrow_end[0] - head_size, arrow_end[1] + head_size),
-						(arrow_end[0] + head_size, arrow_end[1] + head_size)
-					]
-				elif "downward" in swing:
-					arrow_points = [
-						(arrow_end[0], arrow_end[1]),
-						(arrow_end[0] - head_size, arrow_end[1] - head_size),
-						(arrow_end[0] + head_size, arrow_end[1] - head_size)
-					]
-				elif "leftward" in swing:
-					arrow_points = [
-						(arrow_end[0], arrow_end[1]),
-						(arrow_end[0] + head_size, arrow_end[1] - head_size),
-						(arrow_end[0] + head_size, arrow_end[1] + head_size)
-					]
-				elif "rightward" in swing:
-					arrow_points = [
-						(arrow_end[0], arrow_end[1]),
-						(arrow_end[0] - head_size, arrow_end[1] - head_size),
-						(arrow_end[0] - head_size, arrow_end[1] + head_size)
-					]
-				
-				if 'arrow_points' in locals():
-					draw.polygon(arrow_points, fill=arrow_color)
-					del arrow_points  # Clean up for next iteration
+			# Yellow arrow drawing disabled as per user request
+			pass
 		
-		# Draw label with confidence (enhanced for doors)
+		# Draw label with confidence (enhanced for doors and cameras)
 		if class_id == 3:  # door
 			swing_info = ""
 			if masks is not None and i < masks.shape[2]:
@@ -2096,6 +2236,8 @@ def create_wall_visualization(original_image, model_results, wall_parameters, ju
 				orientation = analyzeDoorOrientation(door_mask, bbox, image_width, image_height)
 				swing_info = f" | {orientation.get('estimated_swing', 'unknown')}"
 			label = f"{class_names.get(class_id, 'Unknown')} ({confidence:.2f}){swing_info}"
+		elif class_id == 4:  # camera
+			label = f"{class_names.get(class_id, 'Unknown')} ({confidence:.2f})"
 		else:
 			label = f"{class_names.get(class_id, 'Unknown')} ({confidence:.2f})"
 		
@@ -2122,20 +2264,66 @@ def create_wall_visualization(original_image, model_results, wall_parameters, ju
 		draw.text((text_x, text_y), label, fill=(255, 255, 255), font=font)
 	
 	# Draw wall centerlines
+	# Pre-compute door bounding boxes once (x1,y1,x2,y2)
+	door_boxes_xy = []
+	for idx, cid in enumerate(class_ids):
+		if cid == 3:
+			dy1, dx1, dy2, dx2 = bboxes[idx]
+			# Ensure all coordinates are scalars
+			dy1, dx1, dy2, dx2 = float(dy1), float(dx1), float(dy2), float(dx2)
+			door_boxes_xy.append((dx1, dy1, dx2, dy2))
+
 	for wall in wall_parameters:
+		# Skip if wall bbox overlaps any door heavily (>35% of wall bbox area)
+		wb = wall.get("bbox", {})
+		x1w = wb.get("x1", 0)
+		y1w = wb.get("y1", 0)
+		x2w = wb.get("x2", 0)
+		y2w = wb.get("y2", 0)
+		wall_area = max(1, (x2w - x1w) * (y2w - y1w))
+		skip_wall = False
+		for (dx1, dy1, dx2, dy2) in door_boxes_xy:
+			inter_x1 = max(x1w, dx1)
+			inter_y1 = max(y1w, dy1)
+			inter_x2 = min(x2w, dx2)
+			inter_y2 = min(y2w, dy2)
+			# Ensure all values are scalars for comparison
+			inter_x1 = float(inter_x1)
+			inter_y1 = float(inter_y1)
+			inter_x2 = float(inter_x2)
+			inter_y2 = float(inter_y2)
+			if inter_x1 < inter_x2 and inter_y1 < inter_y2:
+				inter_area = (inter_x2 - inter_x1) * (inter_y2 - inter_y1)
+				if inter_area / wall_area > 0.35:
+					skip_wall = True
+					break
+		if skip_wall:
+			continue
+
 		centerline = wall["centerline"]
 		if len(centerline) > 1:
 			# Draw centerline
 			for i in range(1, len(centerline)):
 				# Ensure coordinates are tuples (x, y)
-				p1 = tuple(centerline[i-1]) if isinstance(centerline[i-1], list) else centerline[i-1]
-				p2 = tuple(centerline[i]) if isinstance(centerline[i], list) else centerline[i]
+				p1 = centerline[i-1]
+				p2 = centerline[i]
+				
+				# Convert arrays or lists to tuples
+				if isinstance(p1, (list, numpy.ndarray)):
+					p1 = tuple(p1) if isinstance(p1, list) else tuple(p1.tolist())
+				if isinstance(p2, (list, numpy.ndarray)):
+					p2 = tuple(p2) if isinstance(p2, list) else tuple(p2.tolist())
+				
 				draw.line([p1, p2], fill=centerline_color, width=4)
 			
 			# Draw wall ID at midpoint
 			if len(centerline) > 0:
 				mid_idx = len(centerline) // 2
 				mid_point = centerline[mid_idx]
+				
+				# Ensure mid_point is a list/tuple for safe indexing
+				if isinstance(mid_point, numpy.ndarray):
+					mid_point = mid_point.tolist()
 				
 				try:
 					font = ImageFont.truetype("/System/Library/Fonts/Arial.ttf", 14)
@@ -2160,6 +2348,10 @@ def create_wall_visualization(original_image, model_results, wall_parameters, ju
 	for junction in junction_analysis:
 		pos = junction["position"]
 		junction_id = junction["junction_id"]
+		
+		# Ensure pos is a list/tuple for safe indexing
+		if isinstance(pos, numpy.ndarray):
+			pos = pos.tolist()
 		
 		# Draw junction circle
 		radius = 12
@@ -2194,7 +2386,8 @@ def create_wall_visualization(original_image, model_results, wall_parameters, ju
 		("Junctions (Magenta)", junction_color),
 		("Windows (Green)", (0, 255, 0)),
 		("Doors (Blue)", (0, 0, 255)),
-		("Door Arrows (Yellow)", (255, 255, 0))
+		("Door Arrows (Yellow)", (255, 255, 0)),
+		("Cameras (Orange)", (255, 165, 0))
 	]
 	
 	try:
@@ -2231,6 +2424,75 @@ def create_wall_visualization(original_image, model_results, wall_parameters, ju
 			p_end = (cx, y2)
 		draw.line([p_start, p_end], fill=centerline_color, width=4)
 	
+	# ----------------------
+	# Fallback centerlines (only if skeleton-based centerline missing)
+	# Improved: split lines at door openings so they never cover doors.
+	# ----------------------
+
+	# Pre-compute door bounding boxes with small margin
+	door_boxes = []
+	for idx, cid in enumerate(class_ids):
+		if cid == 3:  # door
+			dy1, dx1, dy2, dx2 = bboxes[idx]
+			margin = 25
+			# Ensure all coordinates are scalars
+			dx1, dy1, dx2, dy2 = float(dx1), float(dy1), float(dx2), float(dy2)
+			door_boxes.append((dx1 - margin, dy1 - margin, dx2 + margin, dy2 + margin))
+
+	for i in range(len(bboxes)):
+		if class_ids[i] != 1:
+			continue  # process only walls
+
+		y1, x1, y2, x2 = bboxes[i]
+		# Ensure all coordinates are scalars
+		y1, x1, y2, x2 = float(y1), float(x1), float(y2), float(x2)
+		width_box = x2 - x1
+		height_box = y2 - y1
+		if width_box < 3 or height_box < 3:
+			continue  # ignore tiny walls
+
+		if width_box >= height_box:  # horizontal wall
+			cy = (y1 + y2) // 2
+			segments = [(x1, x2)]
+			# cut segments around door overlaps
+			for (dx1, dy1, dx2, dy2) in door_boxes:
+				if dy1 <= cy <= dy2:  # vertical overlap
+					updated = []
+					for sx, ex in segments:
+						# no overlap
+						if ex < dx1 or sx > dx2:
+							updated.append((sx, ex))
+						else:
+							# segment before door
+							if sx < dx1 - 1:
+								updated.append((sx, dx1 - 1))
+							# segment after door
+							if ex > dx2 + 1:
+								updated.append((dx2 + 1, ex))
+					segments = updated
+			# draw remaining segments
+			for sx, ex in segments:
+				if ex - sx > 2:
+					draw.line([(sx, cy), (ex, cy)], fill=centerline_color, width=4)
+		else:  # vertical wall
+			cx = (x1 + x2) // 2
+			segments = [(y1, y2)]
+			for (dx1, dy1, dx2, dy2) in door_boxes:
+				if dx1 <= cx <= dx2:  # horizontal overlap
+					updated = []
+					for sy, ey in segments:
+						if ey < dy1 or sy > dy2:
+							updated.append((sy, ey))
+						else:
+							if sy < dy1 - 1:
+								updated.append((sy, dy1 - 1))
+							if ey > dy2 + 1:
+								updated.append((dy2 + 1, ey))
+					segments = updated
+			for sy, ey in segments:
+				if ey - sy > 2:
+					draw.line([(cx, sy), (cx, ey)], fill=centerline_color, width=4)
+
 	return vis_image
 
 # Fallback ordering using simple nearest-neighbor (kept for legacy calls)
