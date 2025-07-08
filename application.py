@@ -579,58 +579,20 @@ def createVisualization(original_image, model_results, image_width, image_height
 						 center_x + center_radius, center_y + center_radius], 
 						fill=(0, 255, 255), outline=(0, 0, 0), width=2)
 			
-			# Draw door orientation arrow
-			arrow_length = min((x2 - x1), (y2 - y1)) * 0.4
+			# Yellow arrow drawing disabled as per user request
+			pass
+		
+		# Enhanced window visualization with centerpoint
+		if class_id == 2:  # window
+			# Calculate window center
+			center_x = (x1 + x2) / 2
+			center_y = (y1 + y2) / 2
 			
-			# Determine arrow direction based on estimated swing
-			swing = orientation.get("estimated_swing", "")
-			arrow_color = (255, 255, 0)  # Yellow arrow
-			
-			if "upward" in swing:
-				arrow_end = (center_x, center_y - arrow_length)
-			elif "downward" in swing:
-				arrow_end = (center_x, center_y + arrow_length)
-			elif "leftward" in swing:
-				arrow_end = (center_x - arrow_length, center_y)
-			elif "rightward" in swing:
-				arrow_end = (center_x + arrow_length, center_y)
-			else:
-				arrow_end = (center_x, center_y)  # No arrow for unknown
-			
-			# Draw arrow line
-			if arrow_end != (center_x, center_y):
-				draw.line([(center_x, center_y), arrow_end], fill=arrow_color, width=3)
-				
-				# Draw arrow head (simple triangle)
-				head_size = 8
-				if "upward" in swing:
-					arrow_points = [
-						(arrow_end[0], arrow_end[1]),
-						(arrow_end[0] - head_size, arrow_end[1] + head_size),
-						(arrow_end[0] + head_size, arrow_end[1] + head_size)
-					]
-				elif "downward" in swing:
-					arrow_points = [
-						(arrow_end[0], arrow_end[1]),
-						(arrow_end[0] - head_size, arrow_end[1] - head_size),
-						(arrow_end[0] + head_size, arrow_end[1] - head_size)
-					]
-				elif "leftward" in swing:
-					arrow_points = [
-						(arrow_end[0], arrow_end[1]),
-						(arrow_end[0] + head_size, arrow_end[1] - head_size),
-						(arrow_end[0] + head_size, arrow_end[1] + head_size)
-					]
-				elif "rightward" in swing:
-					arrow_points = [
-						(arrow_end[0], arrow_end[1]),
-						(arrow_end[0] - head_size, arrow_end[1] - head_size),
-						(arrow_end[0] - head_size, arrow_end[1] + head_size)
-					]
-				
-				if 'arrow_points' in locals():
-					draw.polygon(arrow_points, fill=arrow_color)
-					del arrow_points  # Clean up for next iteration
+			# Draw window centerpoint (orange circle)
+			center_radius = 6
+			draw.ellipse([center_x - center_radius, center_y - center_radius, 
+						 center_x + center_radius, center_y + center_radius], 
+						fill=(255, 165, 0), outline=(0, 0, 0), width=2)
 		
 		# Draw label with confidence (enhanced for doors)
 		if class_id == 3:  # door
@@ -2161,6 +2123,70 @@ def visualize_wall_analysis():
 			print(f"Analyzed {len(detailed_doors)} doors")
 		print(f"Time - door analysis: {time.time()-t0:.2f}s")
 		
+		# Extract and analyze windows
+		t0 = time.time()
+		window_indices = [i for i, class_id in enumerate(r['class_ids']) if class_id == 2]
+		detailed_windows = []
+		
+		if window_indices:
+			# Extract window-specific data
+			window_bboxes = [r['rois'][i] for i in window_indices]
+			window_scores = [r['scores'][i] for i in window_indices]
+			window_masks = r['masks'] if len(window_indices) > 0 else None
+			
+			# Perform detailed window analysis
+			for i, (bbox, confidence) in enumerate(zip(window_bboxes, window_scores)):
+				# Get the correct mask index for this window
+				window_mask_index = window_indices[i] if i < len(window_indices) else None
+				window_mask = window_masks[:, :, window_mask_index] if window_masks is not None and window_mask_index is not None else None
+				
+				# Basic window properties
+				y1, x1, y2, x2 = bbox
+				window_width = float(x2 - x1)
+				window_height = float(y2 - y1)
+				window_area = window_width * window_height
+				
+				# Determine window orientation and width
+				if window_width > window_height:
+					window_type = "horizontal"
+					width_px = window_width
+				else:
+					window_type = "vertical"
+					width_px = window_height
+				width_mm = pixels_to_mm(width_px, scale_factor_mm_per_pixel)
+				
+				# Build comprehensive window data
+				window_data = {
+					"window_id": i + 1,
+					"confidence": float(confidence),
+					"location": {
+						"center": {
+							"x": float(pixels_to_mm((x1 + x2) / 2, scale_factor_mm_per_pixel)),
+							"y": float(pixels_to_mm((y1 + y2) / 2, scale_factor_mm_per_pixel))
+						},
+						"relative_position": {
+							"from_left": f"{(x1/w)*100:.1f}%",
+							"from_top": f"{(y1/h)*100:.1f}%"
+						}
+					},
+					"dimensions": {
+						"width": width_mm,
+						"height": float(pixels_to_mm(window_height, scale_factor_mm_per_pixel)),
+						"area": float(pixels_to_mm(window_area, scale_factor_mm_per_pixel)),
+						"aspect_ratio": window_width / window_height if window_height > 0 else 0
+					},
+					"window_type": window_type,
+					"architectural_analysis": {
+						"size_category": categorize_window_size(window_width, window_height),
+						"glazing_type": assess_window_glazing(window_width, window_height),
+						"notes": generate_window_notes(window_width, window_height, window_type)
+					}
+				}
+				detailed_windows.append(window_data)
+			
+			print(f"Analyzed {len(detailed_windows)} windows")
+		print(f"Time - window analysis: {time.time()-t0:.2f}s")
+		
 		# Create enhanced visualization
 		t0 = time.time()
 		vis_image = create_wall_visualization(original_image, r, wall_parameters, junction_analysis, w, h, scale_factor_mm_per_pixel)
@@ -2199,6 +2225,15 @@ def visualize_wall_analysis():
 						"vertical": sum(1 for d in detailed_doors if d["orientation"]["door_type"] == "vertical")
 					},
 					"swing_directions": {}
+				},
+				"windows": {
+					"total_windows": len(detailed_windows),
+					"average_confidence": float(numpy.mean([d["confidence"] for d in detailed_windows])) if detailed_windows else 0,
+					"window_types": {
+						"horizontal": sum(1 for d in detailed_windows if d["window_type"] == "horizontal"),
+						"vertical": sum(1 for d in detailed_windows if d["window_type"] == "vertical")
+					},
+					"glazing_types": {}
 				}
 			},
 			"walls": {
@@ -2207,6 +2242,9 @@ def visualize_wall_analysis():
 			},
 			"doors": {
 				"detailed_doors": detailed_doors
+			},
+			"windows": {
+				"detailed_windows": detailed_windows
 			}
 		}
 		
@@ -2214,6 +2252,11 @@ def visualize_wall_analysis():
 		for door in detailed_doors:
 			swing = door["orientation"]["estimated_swing"]
 			wall_analysis["summary"]["doors"]["swing_directions"][swing] = wall_analysis["summary"]["doors"]["swing_directions"].get(swing, 0) + 1
+		
+		# Count window glazing types
+		for window in detailed_windows:
+			glazing = window["architectural_analysis"]["glazing_type"]
+			wall_analysis["summary"]["windows"]["glazing_types"][glazing] = wall_analysis["summary"]["windows"]["glazing_types"].get(glazing, 0) + 1
 		
 		wall_json_filename = f"walls{test_num}.json"
 		save_wall_analysis(wall_analysis, wall_json_filename)
@@ -2224,10 +2267,12 @@ def visualize_wall_analysis():
 			"analysis_file": wall_json_filename,
 			"total_walls": len(wall_parameters),
 			"total_doors": len(detailed_doors),
+			"total_windows": len(detailed_windows),
 			"total_junctions": len(junction_analysis),
 			"comprehensive_summary": {
 				"wall_count": len(wall_parameters),
 				"door_count": len(detailed_doors),
+				"window_count": len(detailed_windows),
 				"junction_count": len(junction_analysis),
 				"total_wall_length_mm": sum(w["length"] for w in wall_parameters),
 				"total_wall_thickness_mm": sum(w["thickness"]["average"] for w in wall_parameters)
@@ -2298,6 +2343,18 @@ def create_wall_visualization(original_image, model_results, wall_parameters, ju
 			
 			# Yellow arrow drawing disabled as per user request
 			pass
+		
+		# Enhanced window visualization with centerpoint
+		if class_id == 2:  # window
+			# Calculate window center
+			center_x = (x1 + x2) / 2
+			center_y = (y1 + y2) / 2
+			
+			# Draw window centerpoint (orange circle)
+			center_radius = 6
+			draw.ellipse([center_x - center_radius, center_y - center_radius, 
+						 center_x + center_radius, center_y + center_radius], 
+						fill=(255, 165, 0), outline=(0, 0, 0), width=2)
 		
 		# Draw label with confidence (enhanced for doors)
 		if class_id == 3:  # door
@@ -2456,9 +2513,9 @@ def create_wall_visualization(original_image, model_results, wall_parameters, ju
 		("Centerlines (Yellow)", centerline_color),
 		("Junctions (Magenta)", junction_color),
 		("Windows (Green)", (0, 255, 0)),
+		("Window Centers (Orange circles)", (255, 165, 0)),
 		("Doors (Blue)", (0, 0, 255)),
-		("Door Centers (Cyan circles)", (0, 255, 255)),
-		("Door Arrows (Yellow)", (255, 255, 0))
+		("Door Centers (Cyan circles)", (0, 255, 255))
 	]
 	
 	try:
@@ -2663,6 +2720,62 @@ def convert_door_center_to_mm(door_data, scale_factor_mm_per_pixel):
         door_mm["location"]["center_mm"] = {"x": x_mm, "y": y_mm}
     
     return door_mm
+
+def categorize_window_size(width, height):
+	"""Categorize window size based on dimensions"""
+	window_area = width * height
+	
+	if window_area < 1000:
+		return "small"
+	elif window_area < 4000:
+		return "standard"
+	elif window_area < 8000:
+		return "large"
+	else:
+		return "oversized"
+
+def assess_window_glazing(width, height):
+	"""Assess window glazing type based on dimensions"""
+	# Determine if it's likely single, double, or triple glazing based on size
+	window_area = width * height
+	
+	if window_area < 2000:
+		return "single_glazing_likely"
+	elif window_area < 6000:
+		return "double_glazing_likely"
+	else:
+		return "triple_glazing_likely"
+
+def generate_window_notes(width, height, window_type):
+	"""Generate architectural insights about window placement and type"""
+	notes = []
+	
+	window_area = width * height
+	
+	# Window size analysis
+	if window_area < 1000:
+		notes.append("Small window - possibly for ventilation or light")
+	elif window_area > 8000:
+		notes.append("Large window - likely for significant natural lighting")
+	
+	# Window orientation analysis
+	if window_type == "horizontal":
+		notes.append("Horizontal window orientation")
+		if width > height * 2:
+			notes.append("Wide horizontal window - panoramic view")
+	else:
+		notes.append("Vertical window orientation")
+		if height > width * 2:
+			notes.append("Tall vertical window - floor-to-ceiling style")
+	
+	# Aspect ratio insights
+	aspect_ratio = width / height if height > 0 else 0
+	if aspect_ratio > 3:
+		notes.append("Very wide window - modern architectural style")
+	elif aspect_ratio < 0.5:
+		notes.append("Very tall window - contemporary design")
+	
+	return notes
 
 if __name__ == '__main__':
 	application.debug = True
