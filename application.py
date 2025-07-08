@@ -1,3 +1,32 @@
+# Floor Plan to 3D API
+# 
+# This API provides comprehensive floor plan analysis including:
+# - Wall detection and parameter extraction
+# - Door and window analysis
+# - Junction detection and classification
+# - Room detection and analysis
+# - Icon/symbol detection
+#
+# NEW FEATURE: Millimeter Conversion
+# To convert pixel measurements to millimeters, include a 'scale_factor_mm_per_pixel' 
+# parameter in your POST request. This factor represents how many millimeters 
+# each pixel represents in the real world.
+#
+# Example usage:
+# - If 1 pixel = 0.5 mm, use scale_factor_mm_per_pixel=0.5
+# - If 1 pixel = 2 mm, use scale_factor_mm_per_pixel=2.0
+# - If no scale factor is provided, it defaults to 1.0 (1 pixel = 1 mm)
+#
+# The API will now return both pixel and millimeter measurements in the JSON output:
+# - centerline_px: centerline coordinates in pixels
+# - centerline_mm: centerline coordinates in millimeters
+# - length_px: wall length in pixels
+# - length_mm: wall length in millimeters
+# - thickness_px: wall thickness in pixels
+# - thickness_mm: wall thickness in millimeters
+# - bbox_px: bounding box in pixels
+# - bbox_mm: bounding box in millimeters
+
 import os
 import numpy
 import skimage.color
@@ -1686,93 +1715,77 @@ def analyze_junction_types(junctions, wall_connections):
 	
 	return junction_analysis
 
-def extract_wall_parameters(segments, wall_mask, junctions):
-	"""Extract comprehensive parameters for each wall segment"""
-	wall_parameters = []
-	
-	# Find wall connections
-	wall_connections = find_wall_connections(segments, junctions)
-	
-	for i, segment in enumerate(segments):
-		wall_id = f"W{i+1}"
-		
-		# Extract centerline coordinates
-		centerline = extract_centerline_coords(segment)
-		
-		# Calculate wall properties
-		length = calculate_wall_length(centerline)
-		thickness = calculate_wall_thickness(wall_mask, centerline)
-		orientation = calculate_wall_orientation(centerline)
-		
-		# Get bounding box of wall segment
-		if len(segment) > 0:
-			min_y, min_x = numpy.min(segment, axis=0)
-			max_y, max_x = numpy.max(segment, axis=0)
-			bbox = {
-				"x1": float(min_x), "y1": float(min_y),
-				"x2": float(max_x), "y2": float(max_y)
-			}
-		else:
-			bbox = {"x1": 0, "y1": 0, "x2": 0, "y2": 0}
-		
-		wall_params = {
-			"wall_id": wall_id,
-			"centerline": centerline,
-			"length_px": length,
-			"thickness": thickness,
-			"orientation_degrees": orientation,
-			"bbox": bbox,
-			"connections": wall_connections.get(wall_id, {"start_junction": None, "end_junction": None}),
-			"segment_area": float(len(segment))
-		}
-		
-		wall_parameters.append(wall_params)
-	
-	return wall_parameters
+def extract_wall_parameters(segments, wall_mask, junctions, scale_factor_mm_per_pixel=1.0):
+    """Extract comprehensive parameters for each wall segment (output only mm fields)"""
+    wall_parameters = []
+    wall_connections = find_wall_connections(segments, junctions)
+    for i, segment in enumerate(segments):
+        wall_id = f"W{i+1}"
+        centerline = extract_centerline_coords(segment)
+        length_px = calculate_wall_length(centerline)
+        thickness_px = calculate_wall_thickness(wall_mask, centerline)
+        orientation = calculate_wall_orientation(centerline)
+        if len(segment) > 0:
+            min_y, min_x = numpy.min(segment, axis=0)
+            max_y, max_x = numpy.max(segment, axis=0)
+            bbox_px = {
+                "x1": float(min_x), "y1": float(min_y),
+                "x2": float(max_x), "y2": float(max_y)
+            }
+        else:
+            bbox_px = {"x1": 0, "y1": 0, "x2": 0, "y2": 0}
+        length_mm = pixels_to_mm(length_px, scale_factor_mm_per_pixel)
+        thickness_mm = convert_thickness_to_mm(thickness_px, scale_factor_mm_per_pixel)
+        centerline_mm = convert_centerline_to_mm(centerline, scale_factor_mm_per_pixel)
+        bbox_mm = convert_bbox_to_mm(bbox_px, scale_factor_mm_per_pixel)
+        wall_params = {
+            "wall_id": wall_id,
+            "centerline": centerline_mm,
+            "length": length_mm,
+            "thickness": thickness_mm,
+            "orientation_degrees": orientation,
+            "bbox": bbox_mm,
+            "connections": wall_connections.get(wall_id, {"start_junction": None, "end_junction": None}),
+            "segment_area": float(len(segment))
+        }
+        wall_parameters.append(wall_params)
+    return wall_parameters
 
-def extract_wall_parameters_with_regions(all_wall_segments, wall_mask, junctions):
-	"""Extract comprehensive parameters for each wall segment with region prefixes"""
-	wall_parameters = []
-	
-	# Find wall connections
-	wall_connections = find_wall_connections([seg for seg, _ in all_wall_segments], junctions)
-	
-	for i, (segment, region_prefix) in enumerate(all_wall_segments):
-		wall_id = f"{region_prefix}W{i+1}"
-		
-		# Extract centerline coordinates with validation
-		centerline = extract_centerline_coords_with_validation(segment, wall_mask)
-		
-		# Calculate wall properties
-		length = calculate_wall_length(centerline)
-		thickness = calculate_wall_thickness(wall_mask, centerline)
-		orientation = calculate_wall_orientation(centerline)
-		
-		# Get bounding box of wall segment
-		if len(segment) > 0:
-			min_y, min_x = numpy.min(segment, axis=0)
-			max_y, max_x = numpy.max(segment, axis=0)
-			bbox = {
-				"x1": float(min_x), "y1": float(min_y),
-				"x2": float(max_x), "y2": float(max_y)
-			}
-		else:
-			bbox = {"x1": 0, "y1": 0, "x2": 0, "y2": 0}
-		
-		wall_params = {
-			"wall_id": wall_id,
-			"centerline": centerline,
-			"length_px": length,
-			"thickness": thickness,
-			"orientation_degrees": orientation,
-			"bbox": bbox,
-			"connections": wall_connections.get(wall_id, {"start_junction": None, "end_junction": None}),
-			"segment_area": float(len(segment))
-		}
-		
-		wall_parameters.append(wall_params)
-	
-	return wall_parameters
+def extract_wall_parameters_with_regions(all_wall_segments, wall_mask, junctions, scale_factor_mm_per_pixel=1.0):
+    """Extract comprehensive parameters for each wall segment with region prefixes (output only mm fields)"""
+    wall_parameters = []
+    wall_connections = find_wall_connections([seg for seg, _ in all_wall_segments], junctions)
+    for i, (segment, region_prefix) in enumerate(all_wall_segments):
+        wall_id = f"{region_prefix}W{i+1}"
+        centerline = extract_centerline_coords_with_validation(segment, wall_mask)
+        length_px = calculate_wall_length(centerline)
+        thickness_px = calculate_wall_thickness(wall_mask, centerline)
+        orientation = calculate_wall_orientation(centerline)
+        if len(segment) > 0:
+            min_y, min_x = numpy.min(segment, axis=0)
+            max_y, max_x = numpy.max(segment, axis=0)
+            bbox_px = {
+                "x1": float(min_x), "y1": float(min_y),
+                "x2": float(max_x), "y2": float(max_y)
+            }
+        else:
+            bbox_px = {"x1": 0, "y1": 0, "x2": 0, "y2": 0}
+        length_mm = pixels_to_mm(length_px, scale_factor_mm_per_pixel)
+        thickness_mm = convert_thickness_to_mm(thickness_px, scale_factor_mm_per_pixel)
+        centerline_mm = convert_centerline_to_mm(centerline, scale_factor_mm_per_pixel)
+        bbox_mm = convert_bbox_to_mm(bbox_px, scale_factor_mm_per_pixel)
+        wall_params = {
+            "wall_id": wall_id,
+            "centerline": centerline_mm,
+            "length": length_mm,
+            "thickness": thickness_mm,
+            "orientation_degrees": orientation,
+            "bbox": bbox_mm,
+            "connections": wall_connections.get(wall_id, {"start_junction": None, "end_junction": None}),
+            "segment_area": float(len(segment))
+        }
+        wall_parameters.append(wall_params)
+    return wall_parameters
 
 @application.route('/analyze_walls', methods=['POST'])
 def analyze_wall_parameters():
@@ -1781,6 +1794,8 @@ def analyze_wall_parameters():
 	
 	try:
 		imagefile = Image.open(request.files['image'].stream)
+		# Get scale factor from request (default to 1.0 if not provided)
+		scale_factor_mm_per_pixel = float(request.form.get('scale_factor_mm_per_pixel', 1.0))
 		# Detect if this is an office plan (thin lines)
 		img_rgb_tmp = imagefile.copy().convert('RGB')
 		gray_tmp = cv2.cvtColor(numpy.array(img_rgb_tmp), cv2.COLOR_RGB2GRAY)
@@ -1852,11 +1867,15 @@ def analyze_wall_parameters():
 		print(f"Segmented into {len(all_wall_segments)} individual walls with {len(all_junctions)} junctions")
 		
 		# Extract detailed wall parameters with region prefixes
-		wall_parameters = extract_wall_parameters_with_regions(all_wall_segments, combined_wall_mask, all_junctions)
+		wall_parameters = extract_wall_parameters_with_regions(all_wall_segments, combined_wall_mask, all_junctions, scale_factor_mm_per_pixel)
 		
 		# Analyze junctions
 		wall_connections = find_wall_connections([seg for seg, _ in all_wall_segments], all_junctions)
 		junction_analysis = analyze_junction_types(all_junctions, wall_connections)
+		
+		# Convert junction positions to millimeters
+		for junction in junction_analysis:
+			junction.update(convert_junction_position_to_mm(junction, scale_factor_mm_per_pixel))
 		# Fallback junctions from wall bounding boxes if none detected
 		if len(junction_analysis) == 0:
 			wall_bboxes = [r['rois'][idx] for idx in wall_indices]
@@ -1871,8 +1890,10 @@ def analyze_wall_parameters():
 				})
 		
 		# Calculate summary statistics
-		total_wall_length = sum(wall["length_px"] for wall in wall_parameters)
-		avg_wall_thickness = numpy.mean([wall["thickness"]["average"] for wall in wall_parameters if wall["thickness"]["average"] > 0])
+		total_wall_length_px = sum(wall["length_px"] for wall in wall_parameters)
+		total_wall_length_mm = sum(wall["length_mm"] for wall in wall_parameters)
+		avg_wall_thickness_px = numpy.mean([wall["thickness"]["average"] for wall in wall_parameters if wall["thickness"]["average"] > 0])
+		avg_wall_thickness_mm = numpy.mean([wall["thickness"]["average"] for wall in wall_parameters if wall["thickness"]["average"] > 0])
 		
 		# Wall orientation distribution
 		orientation_categories = {
@@ -1895,13 +1916,15 @@ def analyze_wall_parameters():
 			"metadata": {
 				"timestamp": datetime.now().isoformat(),
 				"image_dimensions": {"width": w, "height": h},
-				"analysis_type": "wall_parameter_analysis"
+				"scale_factor_mm_per_pixel": scale_factor_mm_per_pixel,
+				"analysis_type": "wall_parameter_analysis",
+				"units": "millimeters"
 			},
 			"summary": {
 				"total_walls_detected": len(wall_parameters),
 				"total_junctions": len(junctions),
-				"total_wall_length_px": float(total_wall_length),
-				"average_wall_thickness_px": float(avg_wall_thickness) if not numpy.isnan(avg_wall_thickness) else 0.0,
+				"total_wall_length_mm": float(total_wall_length_mm),
+				"average_wall_thickness_mm": float(avg_wall_thickness_mm) if not numpy.isnan(avg_wall_thickness_mm) else 0.0,
 				"wall_orientation_distribution": orientation_categories,
 				"junction_types": {
 					"corners": len([j for j in junction_analysis if j["junction_type"] == "corner"]),
@@ -1999,6 +2022,8 @@ def visualize_wall_analysis():
 	
 	try:
 		imagefile = Image.open(request.files['image'].stream)
+		# Get scale factor from request (default to 1.0 if not provided)
+		scale_factor_mm_per_pixel = float(request.form.get('scale_factor_mm_per_pixel', 1.0))
 		original_image = imagefile.copy()
 		# Office plan detection
 		img_rgb_tmp2 = original_image.convert('RGB')
@@ -2111,10 +2136,14 @@ def visualize_wall_analysis():
 		print("Combined wall mask ready; starting skeletonisation & segment extraction …")
 		wall_segments, junctions = segment_individual_walls(combined_wall_mask)
 		print(f"Found {len(wall_segments)} wall segments and {len(junctions)} raw junctions")
-		wall_parameters = extract_wall_parameters(wall_segments, combined_wall_mask, junctions)
+		wall_parameters = extract_wall_parameters(wall_segments, combined_wall_mask, junctions, scale_factor_mm_per_pixel)
 		print(f"Computed parameters for {len(wall_parameters)} walls")
 		wall_connections_viz = find_wall_connections(wall_segments, junctions)
 		junction_analysis = analyze_junction_types(junctions, wall_connections_viz)
+		
+		# Convert junction positions to millimeters
+		for junction in junction_analysis:
+			junction.update(convert_junction_position_to_mm(junction, scale_factor_mm_per_pixel))
 		print(f"Final junction list contains {len(junction_analysis)} junctions")
 		print(f"Time - wall segmentation & analysis: {time.time()-t0:.2f}s")
 		
@@ -2123,17 +2152,20 @@ def visualize_wall_analysis():
 			wall_bboxes = [r['rois'][idx] for idx in wall_indices]
 			fallback_juncs = find_junctions_from_bboxes(wall_bboxes)
 			for jx, jy in fallback_juncs:
-				junction_analysis.append({
+				junction_data = {
 					"junction_id": f"J{len(junction_analysis)+1}",
 					"position": [float(jx), float(jy)],
 					"connected_walls": [],
 					"junction_type": "corner",
 					"wall_count": 2
-				})
+				}
+				# Convert position to millimeters
+				junction_data.update(convert_junction_position_to_mm(junction_data, scale_factor_mm_per_pixel))
+				junction_analysis.append(junction_data)
 		
 		# Create enhanced visualization
 		t0 = time.time()
-		vis_image = create_wall_visualization(original_image, r, wall_parameters, junction_analysis, w, h)
+		vis_image = create_wall_visualization(original_image, r, wall_parameters, junction_analysis, w, h, scale_factor_mm_per_pixel)
 		print(f"Time - visualization drawing: {time.time()-t0:.2f}s")
 		print("Visualization image drawn; saving files …")
 		
@@ -2150,7 +2182,9 @@ def visualize_wall_analysis():
 			"metadata": {
 				"timestamp": datetime.now().isoformat(),
 				"image_dimensions": {"width": w, "height": h},
-				"analysis_type": "wall_visualization_analysis"
+				"scale_factor_mm_per_pixel": scale_factor_mm_per_pixel,
+				"analysis_type": "wall_visualization_analysis",
+				"units": "millimeters"
 			},
 			"individual_walls": wall_parameters,
 			"junctions": junction_analysis
@@ -2168,7 +2202,8 @@ def visualize_wall_analysis():
 			"wall_summary": {
 				"wall_count": len(wall_parameters),
 				"junction_count": len(junction_analysis),
-				"total_length": sum(w["length_px"] for w in wall_parameters)
+				"total_length_mm": sum(w["length"] for w in wall_parameters),
+				"total_wall_thickness_mm": sum(w["thickness"]["average"] for w in wall_parameters)
 			}
 		})
 		
@@ -2176,7 +2211,7 @@ def visualize_wall_analysis():
 		traceback.print_exc() 
 		return jsonify({"error": str(e)}), 500
 
-def create_wall_visualization(original_image, model_results, wall_parameters, junction_analysis, image_width, image_height):
+def create_wall_visualization(original_image, model_results, wall_parameters, junction_analysis, image_width, image_height, scale_factor_mm_per_pixel=1.0):
 	"""Create enhanced visualization with wall centerlines, junctions, and parameters"""
 	
 	# Convert to RGB if needed
@@ -2346,7 +2381,9 @@ def create_wall_visualization(original_image, model_results, wall_parameters, ju
 	
 	# Draw junctions
 	for junction in junction_analysis:
-		pos = junction["position"]
+		# Convert millimeter position back to pixels for visualization
+		pos_mm = junction["position"]
+		pos = [mm_to_pixels(pos_mm[0], scale_factor_mm_per_pixel), mm_to_pixels(pos_mm[1], scale_factor_mm_per_pixel)]
 		junction_id = junction["junction_id"]
 		
 		# Ensure pos is a list/tuple for safe indexing
@@ -2510,6 +2547,74 @@ def order_centerline_points(points):
         idx = int(np.argmin(distances))
         ordered.append(remaining.pop(idx))
     return ordered
+
+# Add these functions after the existing utility functions, around line 90
+
+def pixels_to_mm(pixels, scale_factor_mm_per_pixel):
+    """Convert pixel measurements to millimeters"""
+    # If scale_factor_mm_per_pixel represents mm per pixel, use it directly
+    # If it represents pixels per mm, we need to invert it
+    return pixels * scale_factor_mm_per_pixel
+
+def mm_to_pixels(mm, scale_factor_mm_per_pixel):
+    """Convert millimeter measurements to pixels"""
+    return mm / scale_factor_mm_per_pixel
+
+def convert_centerline_to_mm(centerline_pixels, scale_factor_mm_per_pixel):
+    """Convert centerline coordinates from pixels to millimeters"""
+    if not centerline_pixels:
+        return []
+    
+    centerline_mm = []
+    for point in centerline_pixels:
+        if len(point) >= 2:
+            x_mm = pixels_to_mm(point[0], scale_factor_mm_per_pixel)
+            y_mm = pixels_to_mm(point[1], scale_factor_mm_per_pixel)
+            centerline_mm.append([x_mm, y_mm])
+    
+    return centerline_mm
+
+def convert_thickness_to_mm(thickness_data, scale_factor_mm_per_pixel):
+    """Convert thickness measurements from pixels to millimeters"""
+    if not thickness_data:
+        return thickness_data
+    
+    thickness_mm = {
+        "average": pixels_to_mm(thickness_data.get("average", 0), scale_factor_mm_per_pixel),
+        "min": pixels_to_mm(thickness_data.get("min", 0), scale_factor_mm_per_pixel),
+        "max": pixels_to_mm(thickness_data.get("max", 0), scale_factor_mm_per_pixel),
+        "profile": [pixels_to_mm(t, scale_factor_mm_per_pixel) for t in thickness_data.get("profile", [])]
+    }
+    
+    return thickness_mm
+
+def convert_bbox_to_mm(bbox_pixels, scale_factor_mm_per_pixel):
+    """Convert bounding box coordinates from pixels to millimeters"""
+    if not bbox_pixels:
+        return bbox_pixels
+    
+    bbox_mm = {
+        "x1": pixels_to_mm(bbox_pixels.get("x1", 0), scale_factor_mm_per_pixel),
+        "y1": pixels_to_mm(bbox_pixels.get("y1", 0), scale_factor_mm_per_pixel),
+        "x2": pixels_to_mm(bbox_pixels.get("x2", 0), scale_factor_mm_per_pixel),
+        "y2": pixels_to_mm(bbox_pixels.get("y2", 0), scale_factor_mm_per_pixel)
+    }
+    
+    return bbox_mm
+
+def convert_junction_position_to_mm(junction_data, scale_factor_mm_per_pixel):
+    """Convert junction position from pixels to millimeters"""
+    if not junction_data or "position" not in junction_data:
+        return junction_data
+    
+    junction_mm = junction_data.copy()
+    position_pixels = junction_data["position"]
+    if len(position_pixels) >= 2:
+        x_mm = pixels_to_mm(position_pixels[0], scale_factor_mm_per_pixel)
+        y_mm = pixels_to_mm(position_pixels[1], scale_factor_mm_per_pixel)
+        junction_mm["position"] = [x_mm, y_mm]
+    
+    return junction_mm
 
 if __name__ == '__main__':
 	application.debug = True
