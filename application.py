@@ -2199,7 +2199,7 @@ def visualize_wall_analysis():
 		
 		# Create enhanced visualization
 		t0 = time.time()
-		vis_image = create_wall_visualization(original_image, r, wall_parameters, junction_analysis, w, h, scale_factor_mm_per_pixel)
+		vis_image = create_wall_visualization(original_image, r, wall_parameters, junction_analysis, w, h, scale_factor_mm_per_pixel, exterior_walls)
 		print(f"Time - visualization drawing: {time.time()-t0:.2f}s")
 		print("Visualization image drawn; saving files …")
 		
@@ -2308,7 +2308,7 @@ def visualize_wall_analysis():
 		traceback.print_exc() 
 		return jsonify({"error": str(e)}), 500
 
-def create_wall_visualization(original_image, model_results, wall_parameters, junction_analysis, image_width, image_height, scale_factor_mm_per_pixel=1.0):
+def create_wall_visualization(original_image, model_results, wall_parameters, junction_analysis, image_width, image_height, scale_factor_mm_per_pixel=1.0, exterior_walls=None):
 	"""Create enhanced visualization with wall centerlines, junctions, and parameters"""
 	
 	# Convert to RGB if needed
@@ -2425,7 +2425,9 @@ def create_wall_visualization(original_image, model_results, wall_parameters, ju
 			door_boxes_xy.append((dx1, dy1, dx2, dy2))
 
 	# Create a set of exterior wall IDs for quick lookup
-	exterior_wall_ids = {wall["wall_id"] for wall in wall_parameters if "exterior_reasons" in wall}
+	exterior_wall_ids = set()
+	if exterior_walls:
+		exterior_wall_ids = {wall["wall_id"] for wall in exterior_walls}
 
 	for wall in wall_parameters:
 		# Skip if wall bbox overlaps any door heavily (>35% of wall bbox area)
@@ -2829,8 +2831,8 @@ def identify_exterior_walls(wall_parameters, image_width, image_height, scale_fa
 	image_width_mm = pixels_to_mm(image_width, scale_factor_mm_per_pixel)
 	image_height_mm = pixels_to_mm(image_height, scale_factor_mm_per_pixel)
 	
-	# Define boundary margins (walls within 5% of image edges are likely exterior)
-	boundary_margin = 0.05  # 5% of image dimensions
+	# Define boundary margins (walls within 3% of image edges are likely exterior)
+	boundary_margin = 0.03  # 3% of image dimensions (more strict)
 	x_margin = image_width_mm * boundary_margin
 	y_margin = image_height_mm * boundary_margin
 	
@@ -2854,7 +2856,7 @@ def identify_exterior_walls(wall_parameters, image_width, image_height, scale_fa
 		is_exterior = False
 		exterior_reasons = []
 		
-		# Criterion 1: Near image boundaries
+		# Criterion 1: Near image boundaries (more strict)
 		if is_near_left or is_near_right or is_near_top or is_near_bottom:
 			is_exterior = True
 			if is_near_left:
@@ -2866,16 +2868,29 @@ def identify_exterior_walls(wall_parameters, image_width, image_height, scale_fa
 			if is_near_bottom:
 				exterior_reasons.append("bottom_boundary")
 		
-		# Criterion 2: Poorly connected walls (likely exterior)
-		if connection_count <= 1 and not is_exterior:
+		# Criterion 2: Poorly connected walls (likely exterior) - more strict
+		if connection_count == 0 and not is_exterior:  # Only unconnected walls
 			is_exterior = True
-			exterior_reasons.append("poorly_connected")
+			exterior_reasons.append("unconnected")
 		
 		# Criterion 3: Long walls near boundaries (likely perimeter walls)
 		wall_length = wall.get("length", 0)
-		if wall_length > 100 and (is_near_left or is_near_right or is_near_top or is_near_bottom):
+		if wall_length > 150 and (is_near_left or is_near_right or is_near_top or is_near_bottom):  # Increased threshold
 			is_exterior = True
 			exterior_reasons.append("long_boundary_wall")
+		
+		# Criterion 4: Walls that span a significant portion of the image edge
+		if is_near_left or is_near_right:
+			wall_span = abs(y2 - y1)
+			if wall_span > image_height_mm * 0.3:  # Spans 30% of image height
+				is_exterior = True
+				exterior_reasons.append("spans_vertical_edge")
+		
+		if is_near_top or is_near_bottom:
+			wall_span = abs(x2 - x1)
+			if wall_span > image_width_mm * 0.3:  # Spans 30% of image width
+				is_exterior = True
+				exterior_reasons.append("spans_horizontal_edge")
 		
 		if is_exterior:
 			exterior_wall_data = wall.copy()
