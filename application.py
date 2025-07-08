@@ -5,7 +5,6 @@
 # - Door and window analysis
 # - Junction detection and classification
 # - Room detection and analysis
-# - Icon/symbol detection
 #
 # NEW FEATURE: Millimeter Conversion
 # To convert pixel measurements to millimeters, include a 'scale_factor_mm_per_pixel' 
@@ -67,11 +66,6 @@ from PIL import Image, ImageDraw, ImageFont
 import numpy as np
 from skimage.draw import line as skimage_line
 import time
-from symbol_detector import detect_icons_orb
-
-
-from symbol_detector import detect_icons, CLASS_MAP, DISPLAY_NAME
-from symbol_detector import detect_icons_shape
 
 # Global variables
 global _model
@@ -492,28 +486,6 @@ def visualize_results():
 		# Get model predictions
 		r = _model.detect(sample, verbose=0)[0]
 		
-		# Run icon detection and append to r
-		# ORB + homography matcher, requires at least 8 inliers
-		# 1) build a single wall_mask from all wall instances
-		wall_mask = np.zeros((h, w), dtype=np.uint8)
-		for idx, cid in enumerate(r['class_ids']):
-			if cid == 1:  # wall class
-				wall_mask[r['masks'][:,:,idx]] = 255
-
-		# 2) blank out wall pixels so ORB only sees non-wall regions
-		masked = image.copy()
-		masked[wall_mask == 255] = 255
-
-		icon_dets = detect_icons_orb(masked, debug=True, min_inliers=8)
-
-		for bbox, cid, score in icon_dets:
-			if 'rois' in r:
-				r['rois'] = numpy.vstack([r['rois'], bbox])
-			else:
-				r['rois'] = numpy.array([bbox])
-			r['class_ids'] = numpy.append(r['class_ids'], cid)
-			r['scores'] = numpy.append(r['scores'], score)
-		
 		# Create visualization
 		vis_image = createVisualization(original_image, r, w, h)
 		
@@ -570,14 +542,7 @@ def createVisualization(original_image, model_results, image_width, image_height
 		3: (0, 0, 255)      # Door - Blue
 	}
 	
-	# Add icons
-	icon_colors = {
-		4: (255, 165, 0),   # Orange for cameras
-		5: (128, 0, 128)    # Purple for sensors
-	}
-	colors.update(icon_colors)
-	
-	class_names = {1:'Wall', 2:'Window', 3:'Door', 4:'Camera', 5:'Sensor'}
+	class_names = {1:'Wall', 2:'Window', 3:'Door'}
 	
 	# Draw each detected object
 	bboxes = model_results['rois']
@@ -2045,58 +2010,6 @@ def visualize_wall_analysis():
 		# Model detection
 		t0 = time.time()
 		r = _model.detect(sample, verbose=0)[0]
-
-		# 1) Build a mask of all wall/window/door pixels
-		wall_mask = np.zeros((h, w), dtype=np.uint8)
-		for idx, cid in enumerate(r['class_ids']):
-			if cid in (1, 2, 3):  # 1=wall, 2=window, 3=door
-				wall_mask[r['masks'][:, :, idx]] = 255
-
-		# 2) Blank out those regions so template‐matching ignores them
-		orig_arr   = image.copy()          # image is an H×W×3 uint8 array
-		masked_arr = orig_arr.copy()
-		masked_arr[wall_mask == 255] = 255
-
-		# 3) Run template matcher on the masked image
-		t0 = time.time()
-		icon_dets = detect_icons_orb(masked_arr, debug=True, min_inliers=8)
-		
-
-		# 4) Prune any detections that overlap heavily with walls/windows/doors
-		cleaned = []
-		for bbox, cid, score in icon_dets:
-			y1, x1, y2, x2 = map(int, bbox)
-			region = wall_mask[y1:y2, x1:x2]
-			overlap = float(np.count_nonzero(region)) / ((y2 - y1) * (x2 - x1))
-			if overlap < 0.3:
-				cleaned.append((bbox, cid, score))
-		icon_dets = cleaned
-
-		# 5) Merge the surviving icon boxes back into your Mask R-CNN results
-		for bbox, cid, score in icon_dets:
-			if 'rois' in r:
-				r['rois']      = np.vstack([r['rois'],      bbox])
-			else:
-				r['rois']      = np.array([bbox])
-			r['class_ids'] = np.append(r['class_ids'], cid)
-			r['scores']    = np.append(r['scores'],    score)
-
-
-		
-		
-		
-		# Append icon detections (camera, sensor) via shape analysis (template-free)
-		t0 = time.time()
-		icon_shape_dets = detect_icons_shape(orig_arr, debug=True)
-		print(f"Detected {len(icon_shape_dets)} icons via shape analysis")
-		for bbox, cid, score in icon_shape_dets:
-			if 'rois' in r:
-				r['rois'] = numpy.vstack([r['rois'], bbox])
-			else:
-				r['rois'] = numpy.array([bbox])
-			r['class_ids'] = numpy.append(r['class_ids'], cid)
-			r['scores'] = numpy.append(r['scores'], score)
-		print(f"Time - icon shape analysis: {time.time()-t0:.2f}s")
 		
 		# Extract wall masks and perform analysis
 		t0 = time.time()
@@ -2228,14 +2141,13 @@ def create_wall_visualization(original_image, model_results, wall_parameters, ju
 		1: (255, 0, 0),     # Wall - Red
 		2: (0, 255, 0),     # Window - Green  
 		3: (0, 0, 255),     # Door - Blue
-		4: (255, 165, 0)    # Camera - Orange
 	}
 
 	centerline_color = (255, 255, 0)     # Yellow for centerlines (more visible)
 	junction_color = (255, 0, 255)       # Magenta for junctions
 	text_color = (0, 0, 0)               # Black for text
 	
-	class_names = {1: 'Wall', 2: 'Window', 3: 'Door', 4: 'Camera'}
+	class_names = {1: 'Wall', 2: 'Window', 3: 'Door'}
 	
 	# First draw regular detection boxes
 	bboxes = model_results['rois']
@@ -2263,7 +2175,7 @@ def create_wall_visualization(original_image, model_results, wall_parameters, ju
 			# Yellow arrow drawing disabled as per user request
 			pass
 		
-		# Draw label with confidence (enhanced for doors and cameras)
+		# Draw label with confidence (enhanced for doors)
 		if class_id == 3:  # door
 			swing_info = ""
 			if masks is not None and i < masks.shape[2]:
@@ -2271,8 +2183,6 @@ def create_wall_visualization(original_image, model_results, wall_parameters, ju
 				orientation = analyzeDoorOrientation(door_mask, bbox, image_width, image_height)
 				swing_info = f" | {orientation.get('estimated_swing', 'unknown')}"
 			label = f"{class_names.get(class_id, 'Unknown')} ({confidence:.2f}){swing_info}"
-		elif class_id == 4:  # camera
-			label = f"{class_names.get(class_id, 'Unknown')} ({confidence:.2f})"
 		else:
 			label = f"{class_names.get(class_id, 'Unknown')} ({confidence:.2f})"
 		
@@ -2423,8 +2333,7 @@ def create_wall_visualization(original_image, model_results, wall_parameters, ju
 		("Junctions (Magenta)", junction_color),
 		("Windows (Green)", (0, 255, 0)),
 		("Doors (Blue)", (0, 0, 255)),
-		("Door Arrows (Yellow)", (255, 255, 0)),
-		("Cameras (Orange)", (255, 165, 0))
+		("Door Arrows (Yellow)", (255, 255, 0))
 	]
 	
 	try:
