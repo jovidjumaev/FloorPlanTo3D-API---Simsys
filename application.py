@@ -2041,6 +2041,11 @@ def visualize_wall_analysis():
 		for junction in junction_analysis:
 			junction.update(convert_junction_position_to_mm(junction, scale_factor_mm_per_pixel))
 		print(f"Final junction list contains {len(junction_analysis)} junctions")
+		
+		# Identify exterior walls and calculate perimeter dimensions
+		exterior_walls, interior_walls = identify_exterior_walls(wall_parameters, w, h, scale_factor_mm_per_pixel)
+		perimeter_dimensions = calculate_perimeter_dimensions(exterior_walls)
+		print(f"Identified {len(exterior_walls)} exterior walls and {len(interior_walls)} interior walls")
 		print(f"Time - wall segmentation & analysis: {time.time()-t0:.2f}s")
 		
 		# Fallback junctions from wall bounding boxes if none detected (or very few)
