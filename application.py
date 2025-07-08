@@ -1819,6 +1819,11 @@ def analyze_wall_parameters():
 		# Convert junction positions to millimeters
 		for junction in junction_analysis:
 			junction.update(convert_junction_position_to_mm(junction, scale_factor_mm_per_pixel))
+		
+		# Identify exterior walls and calculate perimeter dimensions
+		exterior_walls, interior_walls = identify_exterior_walls(wall_parameters, w, h, scale_factor_mm_per_pixel)
+		perimeter_dimensions = calculate_perimeter_dimensions(exterior_walls)
+		
 		# Fallback junctions from wall bounding boxes if none detected
 		if len(junction_analysis) == 0:
 			wall_bboxes = [r['rois'][idx] for idx in wall_indices]
@@ -2217,6 +2222,14 @@ def visualize_wall_analysis():
 					"total_length_mm": sum(w["length"] for w in wall_parameters),
 					"average_thickness_mm": sum(w["thickness"]["average"] for w in wall_parameters) / len(wall_parameters) if wall_parameters else 0
 				},
+				"exterior_walls": {
+					"total_exterior_walls": len(exterior_walls),
+					"total_interior_walls": len(interior_walls),
+					"perimeter_length_mm": perimeter_dimensions["total_perimeter_length"],
+					"perimeter_area_mm2": perimeter_dimensions["perimeter_area"],
+					"average_exterior_wall_length_mm": perimeter_dimensions["average_exterior_wall_length"],
+					"boundary_coverage": perimeter_dimensions["boundary_coverage"]
+				},
 				"doors": {
 					"total_doors": len(detailed_doors),
 					"average_confidence": float(numpy.mean([d["confidence"] for d in detailed_doors])) if detailed_doors else 0,
@@ -2238,7 +2251,10 @@ def visualize_wall_analysis():
 			},
 			"walls": {
 				"individual_walls": wall_parameters,
-				"junctions": junction_analysis
+				"junctions": junction_analysis,
+				"exterior_walls": exterior_walls,
+				"interior_walls": interior_walls,
+				"perimeter_analysis": perimeter_dimensions
 			},
 			"doors": {
 				"detailed_doors": detailed_doors
@@ -2271,11 +2287,15 @@ def visualize_wall_analysis():
 			"total_junctions": len(junction_analysis),
 			"comprehensive_summary": {
 				"wall_count": len(wall_parameters),
+				"exterior_wall_count": len(exterior_walls),
+				"interior_wall_count": len(interior_walls),
 				"door_count": len(detailed_doors),
 				"window_count": len(detailed_windows),
 				"junction_count": len(junction_analysis),
 				"total_wall_length_mm": sum(w["length"] for w in wall_parameters),
-				"total_wall_thickness_mm": sum(w["thickness"]["average"] for w in wall_parameters)
+				"total_wall_thickness_mm": sum(w["thickness"]["average"] for w in wall_parameters),
+				"perimeter_length_mm": perimeter_dimensions["total_perimeter_length"],
+				"perimeter_area_mm2": perimeter_dimensions["perimeter_area"]
 			}
 		})
 		
@@ -2399,6 +2419,9 @@ def create_wall_visualization(original_image, model_results, wall_parameters, ju
 			dy1, dx1, dy2, dx2 = float(dy1), float(dx1), float(dy2), float(dx2)
 			door_boxes_xy.append((dx1, dy1, dx2, dy2))
 
+	# Create a set of exterior wall IDs for quick lookup
+	exterior_wall_ids = {wall["wall_id"] for wall in wall_parameters if "exterior_reasons" in wall}
+
 	for wall in wall_parameters:
 		# Skip if wall bbox overlaps any door heavily (>35% of wall bbox area)
 		wb = wall.get("bbox", {})
@@ -2428,6 +2451,17 @@ def create_wall_visualization(original_image, model_results, wall_parameters, ju
 
 		centerline = wall["centerline"]
 		if len(centerline) > 1:
+			# Determine if this is an exterior wall
+			is_exterior = wall["wall_id"] in exterior_wall_ids
+			
+			# Choose color and width based on wall type
+			if is_exterior:
+				wall_color = (255, 140, 0)  # Dark orange for exterior walls
+				wall_width = 6  # Thicker lines for exterior walls
+			else:
+				wall_color = centerline_color  # Yellow for interior walls
+				wall_width = 4  # Normal width for interior walls
+			
 			# Draw centerline
 			for i in range(1, len(centerline)):
 				# Ensure coordinates are tuples (x, y)
@@ -2440,7 +2474,7 @@ def create_wall_visualization(original_image, model_results, wall_parameters, ju
 				if isinstance(p2, (list, numpy.ndarray)):
 					p2 = tuple(p2) if isinstance(p2, list) else tuple(p2.tolist())
 				
-				draw.line([p1, p2], fill=centerline_color, width=4)
+				draw.line([p1, p2], fill=wall_color, width=wall_width)
 			
 			# Draw wall ID at midpoint
 			if len(centerline) > 0:
@@ -2461,11 +2495,14 @@ def create_wall_visualization(original_image, model_results, wall_parameters, ju
 				text_width = text_bbox[2] - text_bbox[0]
 				text_height = text_bbox[3] - text_bbox[1]
 				
-				# Draw text background
+				# Draw text background with different color for exterior walls
 				text_x = mid_point[0] - text_width // 2
 				text_y = mid_point[1] - text_height // 2
+				bg_color = (255, 255, 255) if not is_exterior else (255, 200, 150)  # Light orange for exterior
+				outline_color = wall_color
+				
 				draw.rectangle([text_x-2, text_y-2, text_x+text_width+2, text_y+text_height+2], 
-							  fill=(255, 255, 255), outline=centerline_color)
+							  fill=bg_color, outline=outline_color)
 				
 				# Draw wall ID text
 				draw.text((text_x, text_y), wall_id, fill=text_color, font=font)
@@ -2510,7 +2547,8 @@ def create_wall_visualization(original_image, model_results, wall_parameters, ju
 	legend_y = 10
 	legend_items = [
 		("Walls (Red boxes)", (255, 0, 0)),
-		("Centerlines (Yellow)", centerline_color),
+		("Exterior Walls (Dark Orange)", (255, 140, 0)),
+		("Interior Walls (Yellow)", centerline_color),
 		("Junctions (Magenta)", junction_color),
 		("Windows (Green)", (0, 255, 0)),
 		("Window Centers (Orange circles)", (255, 165, 0)),
@@ -2776,6 +2814,115 @@ def generate_window_notes(width, height, window_type):
 		notes.append("Very tall window - contemporary design")
 	
 	return notes
+
+def identify_exterior_walls(wall_parameters, image_width, image_height, scale_factor_mm_per_pixel):
+	"""Identify walls that form the exterior boundary of the floor plan"""
+	exterior_walls = []
+	interior_walls = []
+	
+	# Convert image dimensions to mm for boundary analysis
+	image_width_mm = pixels_to_mm(image_width, scale_factor_mm_per_pixel)
+	image_height_mm = pixels_to_mm(image_height, scale_factor_mm_per_pixel)
+	
+	# Define boundary margins (walls within 5% of image edges are likely exterior)
+	boundary_margin = 0.05  # 5% of image dimensions
+	x_margin = image_width_mm * boundary_margin
+	y_margin = image_height_mm * boundary_margin
+	
+	for wall in wall_parameters:
+		bbox = wall.get("bbox", {})
+		x1, y1, x2, y2 = bbox.get("x1", 0), bbox.get("y1", 0), bbox.get("x2", 0), bbox.get("y2", 0)
+		
+		# Check if wall is near any image boundary
+		is_near_left = x1 <= x_margin
+		is_near_right = x2 >= (image_width_mm - x_margin)
+		is_near_top = y1 <= y_margin
+		is_near_bottom = y2 >= (image_height_mm - y_margin)
+		
+		# Additional criteria: walls with fewer connections are more likely to be exterior
+		connections = wall.get("connections", {})
+		start_connected = connections.get("start_junction") is not None
+		end_connected = connections.get("end_junction") is not None
+		connection_count = sum([start_connected, end_connected])
+		
+		# Determine if this is likely an exterior wall
+		is_exterior = False
+		exterior_reasons = []
+		
+		# Criterion 1: Near image boundaries
+		if is_near_left or is_near_right or is_near_top or is_near_bottom:
+			is_exterior = True
+			if is_near_left:
+				exterior_reasons.append("left_boundary")
+			if is_near_right:
+				exterior_reasons.append("right_boundary")
+			if is_near_top:
+				exterior_reasons.append("top_boundary")
+			if is_near_bottom:
+				exterior_reasons.append("bottom_boundary")
+		
+		# Criterion 2: Poorly connected walls (likely exterior)
+		if connection_count <= 1 and not is_exterior:
+			is_exterior = True
+			exterior_reasons.append("poorly_connected")
+		
+		# Criterion 3: Long walls near boundaries (likely perimeter walls)
+		wall_length = wall.get("length", 0)
+		if wall_length > 100 and (is_near_left or is_near_right or is_near_top or is_near_bottom):
+			is_exterior = True
+			exterior_reasons.append("long_boundary_wall")
+		
+		if is_exterior:
+			exterior_wall_data = wall.copy()
+			exterior_wall_data["exterior_reasons"] = exterior_reasons
+			exterior_walls.append(exterior_wall_data)
+		else:
+			interior_walls.append(wall)
+	
+	return exterior_walls, interior_walls
+
+def calculate_perimeter_dimensions(exterior_walls):
+	"""Calculate perimeter dimensions from exterior walls"""
+	if not exterior_walls:
+		return {
+			"total_perimeter_length": 0,
+			"exterior_wall_count": 0,
+			"perimeter_area": 0,
+			"boundary_coverage": {
+				"left": 0, "right": 0, "top": 0, "bottom": 0
+			}
+		}
+	
+	total_perimeter_length = sum(wall.get("length", 0) for wall in exterior_walls)
+	exterior_wall_count = len(exterior_walls)
+	
+	# Calculate approximate perimeter area (assuming rectangular shape)
+	# This is a rough estimate based on the longest walls in each direction
+	wall_lengths = [wall.get("length", 0) for wall in exterior_walls]
+	if len(wall_lengths) >= 4:
+		# Sort by length and assume the 4 longest walls form the rectangle
+		sorted_lengths = sorted(wall_lengths, reverse=True)
+		width_estimate = sorted_lengths[0]  # Longest wall
+		height_estimate = sorted_lengths[1]  # Second longest wall
+		perimeter_area = width_estimate * height_estimate
+	else:
+		perimeter_area = 0
+	
+	# Analyze boundary coverage
+	boundary_coverage = {"left": 0, "right": 0, "top": 0, "bottom": 0}
+	for wall in exterior_walls:
+		reasons = wall.get("exterior_reasons", [])
+		for reason in reasons:
+			if reason in boundary_coverage:
+				boundary_coverage[reason] += 1
+	
+	return {
+		"total_perimeter_length": total_perimeter_length,
+		"exterior_wall_count": exterior_wall_count,
+		"perimeter_area": perimeter_area,
+		"boundary_coverage": boundary_coverage,
+		"average_exterior_wall_length": total_perimeter_length / exterior_wall_count if exterior_wall_count > 0 else 0
+	}
 
 if __name__ == '__main__':
 	application.debug = True
