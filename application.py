@@ -2457,10 +2457,25 @@ def create_wall_visualization(original_image, model_results, wall_parameters, ju
 			continue
 
 		centerline = wall["centerline"]
+		# Filter: Only draw wall ID if centerline is long enough and not degenerate
 		if len(centerline) > 1:
+			# Calculate total centerline length in mm
+			total_length = 0
+			unique_points = set()
+			for i in range(1, len(centerline)):
+				p1 = centerline[i-1]
+				p2 = centerline[i]
+				if isinstance(p1, (list, tuple)) and isinstance(p2, (list, tuple)):
+					dx = p2[0] - p1[0]
+					dy = p2[1] - p1[1]
+					total_length += (dx**2 + dy**2) ** 0.5
+				unique_points.add(tuple(p1))
+				unique_points.add(tuple(p2))
+			# Only draw if centerline is at least 10mm and has at least 2 unique points
+			if total_length < 10 or len(unique_points) < 2:
+				continue
 			# Determine if this is an exterior wall
 			is_exterior = wall["wall_id"] in exterior_wall_ids
-			
 			# Choose color and width based on wall type
 			if is_exterior:
 				wall_color = (255, 140, 0)  # Dark orange for exterior walls
@@ -2468,51 +2483,37 @@ def create_wall_visualization(original_image, model_results, wall_parameters, ju
 			else:
 				wall_color = centerline_color  # Yellow for interior walls
 				wall_width = 4  # Normal width for interior walls
-			
 			# Draw centerline
 			for i in range(1, len(centerline)):
 				# Ensure coordinates are tuples (x, y)
 				p1 = centerline[i-1]
 				p2 = centerline[i]
-				
-				# Convert arrays or lists to tuples
 				if isinstance(p1, (list, numpy.ndarray)):
 					p1 = tuple(p1) if isinstance(p1, list) else tuple(p1.tolist())
 				if isinstance(p2, (list, numpy.ndarray)):
 					p2 = tuple(p2) if isinstance(p2, list) else tuple(p2.tolist())
-				
 				draw.line([p1, p2], fill=wall_color, width=wall_width)
-			
 			# Draw wall ID at midpoint
 			if len(centerline) > 0:
 				mid_idx = len(centerline) // 2
 				mid_point = centerline[mid_idx]
-				
-				# Ensure mid_point is a list/tuple for safe indexing
 				if isinstance(mid_point, numpy.ndarray):
 					mid_point = mid_point.tolist()
-				
 				try:
 					font = ImageFont.truetype("/System/Library/Fonts/Arial.ttf", 14)
 				except:
 					font = ImageFont.load_default()
-				
 				wall_id = wall["wall_id"]
 				text_bbox = draw.textbbox((0, 0), wall_id, font=font)
 				text_width = text_bbox[2] - text_bbox[0]
 				text_height = text_bbox[3] - text_bbox[1]
-				
-				# Draw text background with different color for exterior walls
 				text_x = mid_point[0] - text_width // 2
 				text_y = mid_point[1] - text_height // 2
-				bg_color = (255, 255, 255) if not is_exterior else (255, 200, 150)  # Light orange for exterior
+				bg_color = (255, 255, 255) if not is_exterior else (255, 200, 150)
 				outline_color = wall_color
-				
-				draw.rectangle([text_x-2, text_y-2, text_x+text_width+2, text_y+text_height+2], 
-							  fill=bg_color, outline=outline_color)
-				
-				# Draw wall ID text
+				draw.rectangle([text_x-2, text_y-2, text_x+text_width+2, text_y+text_height+2], fill=bg_color, outline=outline_color)
 				draw.text((text_x, text_y), wall_id, fill=text_color, font=font)
+		# END FILTER
 	
 	# Draw junctions
 	for junction in junction_analysis:
