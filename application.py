@@ -2457,9 +2457,12 @@ def create_wall_visualization(original_image, model_results, wall_parameters, ju
 			continue
 
 		centerline = wall["centerline"]
-		# Filter: Only draw wall ID if centerline is long enough and not degenerate
+		# Only draw interior wall centerlines (yellow), not exterior (orange)
+		is_exterior = wall["wall_id"] in exterior_wall_ids
+		if is_exterior:
+			continue  # REMOVE drawing of exterior wall centerlines
+		# Filter: Only draw wall if centerline is long enough and not degenerate
 		if len(centerline) > 1:
-			# Calculate total centerline length in mm
 			total_length = 0
 			unique_points = set()
 			for i in range(1, len(centerline)):
@@ -2471,49 +2474,27 @@ def create_wall_visualization(original_image, model_results, wall_parameters, ju
 					total_length += (dx**2 + dy**2) ** 0.5
 				unique_points.add(tuple(p1))
 				unique_points.add(tuple(p2))
-			# Only draw if centerline is at least 10mm and has at least 2 unique points
 			if total_length < 10 or len(unique_points) < 2:
 				continue
-			# Determine if this is an exterior wall
-			is_exterior = wall["wall_id"] in exterior_wall_ids
-			# Choose color and width based on wall type
-			if is_exterior:
-				wall_color = (255, 140, 0)  # Dark orange for exterior walls
-				wall_width = 6  # Thicker lines for exterior walls
-			else:
-				wall_color = centerline_color  # Yellow for interior walls
-				wall_width = 4  # Normal width for interior walls
-			# Draw centerline
+			wall_color = centerline_color
+			wall_width = 4
 			for i in range(1, len(centerline)):
-				# Ensure coordinates are tuples (x, y)
 				p1 = centerline[i-1]
 				p2 = centerline[i]
 				if isinstance(p1, (list, numpy.ndarray)):
 					p1 = tuple(p1) if isinstance(p1, list) else tuple(p1.tolist())
 				if isinstance(p2, (list, numpy.ndarray)):
 					p2 = tuple(p2) if isinstance(p2, list) else tuple(p2.tolist())
+				
+				# Skip drawing lines in legend area (top-left 40x180 pixel box)
+				legend_area_x = 40
+				legend_area_y = 180  # legend_y (10) + 8 items * 20 pixels
+				if ((p1[0] < legend_area_x and p1[1] < legend_area_y) or 
+					(p2[0] < legend_area_x and p2[1] < legend_area_y)):
+					continue
+				
 				draw.line([p1, p2], fill=wall_color, width=wall_width)
-			# Draw wall ID at midpoint
-			if len(centerline) > 0:
-				mid_idx = len(centerline) // 2
-				mid_point = centerline[mid_idx]
-				if isinstance(mid_point, numpy.ndarray):
-					mid_point = mid_point.tolist()
-				try:
-					font = ImageFont.truetype("/System/Library/Fonts/Arial.ttf", 14)
-				except:
-					font = ImageFont.load_default()
-				wall_id = wall["wall_id"]
-				text_bbox = draw.textbbox((0, 0), wall_id, font=font)
-				text_width = text_bbox[2] - text_bbox[0]
-				text_height = text_bbox[3] - text_bbox[1]
-				text_x = mid_point[0] - text_width // 2
-				text_y = mid_point[1] - text_height // 2
-				bg_color = (255, 255, 255) if not is_exterior else (255, 200, 150)
-				outline_color = wall_color
-				draw.rectangle([text_x-2, text_y-2, text_x+text_width+2, text_y+text_height+2], fill=bg_color, outline=outline_color)
-				draw.text((text_x, text_y), wall_id, fill=text_color, font=font)
-		# END FILTER
+		# Wall ID drawing is temporarily disabled as per user request
 	
 	# Draw junctions
 	for junction in junction_analysis:
@@ -2647,6 +2628,12 @@ def create_wall_visualization(original_image, model_results, wall_parameters, ju
 			# draw remaining segments
 			for sx, ex in segments:
 				if ex - sx > 2:
+					# Skip drawing lines in legend area (top-left 40x180 pixel box)
+					legend_area_x = 40
+					legend_area_y = 180  # legend_y (10) + 8 items * 20 pixels
+					if ((sx < legend_area_x and cy < legend_area_y) or 
+						(ex < legend_area_x and cy < legend_area_y)):
+						continue
 					draw.line([(sx, cy), (ex, cy)], fill=centerline_color, width=4)
 		else:  # vertical wall
 			cx = (x1 + x2) // 2
@@ -2665,6 +2652,12 @@ def create_wall_visualization(original_image, model_results, wall_parameters, ju
 					segments = updated
 			for sy, ey in segments:
 				if ey - sy > 2:
+					# Skip drawing lines in legend area (top-left 40x180 pixel box)
+					legend_area_x = 40
+					legend_area_y = 180  # legend_y (10) + 8 items * 20 pixels
+					if ((cx < legend_area_x and sy < legend_area_y) or 
+						(cx < legend_area_x and ey < legend_area_y)):
+						continue
 					draw.line([(cx, sy), (cx, ey)], fill=centerline_color, width=4)
 
 	return vis_image
