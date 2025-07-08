@@ -14,8 +14,13 @@ import os
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Simple watermark keywords to filter out
-WATERMARK_KEYWORDS = ['alamy', 'shutterstock', 'getty', 'watermark', 'stock', 'copyright', '©', 'www', 'http', '.com']
+# Simple watermark keywords to filter out (English and Korean)
+WATERMARK_KEYWORDS = [
+    # English watermarks
+    'alamy', 'shutterstock', 'getty', 'watermark', 'stock', 'copyright', '©', 'www', 'http', '.com',
+    # Korean watermarks
+    '워터마크', '저작권', '샘플', '견본', '미리보기'
+]
 
 class FloorPlanOCRDetector:
     """
@@ -23,12 +28,13 @@ class FloorPlanOCRDetector:
     Detects space names and labels in multiple languages.
     """
     
-    def __init__(self, languages=['en']):
+    def __init__(self, languages=['en', 'ko']):
         """
         Initialize the OCR detector with support for multiple languages.
         
         Args:
             languages (list): List of language codes to support
+                            Default: ['en', 'ko'] for English and Korean
         """
         self.languages = languages
         self.reader = None
@@ -136,12 +142,12 @@ class FloorPlanOCRDetector:
             logger.info("Running OCR with enhanced parameters...")
             try:
                 results = self.reader.readtext(image, 
-                                            width_ths=0.3,  # Lower width threshold
-                                            height_ths=0.3,  # Lower height threshold
+                                            width_ths=0.2,  # Even lower width threshold
+                                            height_ths=0.2,  # Even lower height threshold
                                             paragraph=False,  # Don't group into paragraphs
                                             detail=1)  # Return detailed results
                 for (bbox, text, confidence) in results:
-                    if text.strip() and confidence > 0.05:  # Even lower threshold
+                    if text.strip() and confidence > 0.03:  # Very low threshold for small text
                         x_coords = [point[0] for point in bbox]
                         y_coords = [point[1] for point in bbox]
                         bbox_formatted = [int(min(x_coords)), int(min(y_coords)), int(max(x_coords)), int(max(y_coords))]
@@ -154,18 +160,86 @@ class FloorPlanOCRDetector:
             except Exception as e:
                 logger.error(f"Error in enhanced OCR: {str(e)}")
             
-            # Remove duplicates based on text and position
+            # Method 4: OCR with very aggressive settings for small text
+            logger.info("Running OCR with aggressive settings for small text...")
+            try:
+                results = self.reader.readtext(image, 
+                                            width_ths=0.1,  # Very low width threshold
+                                            height_ths=0.1,  # Very low height threshold
+                                            paragraph=False,
+                                            detail=1,
+                                            min_size=5)  # Allow very small text
+                for (bbox, text, confidence) in results:
+                    if text.strip() and confidence > 0.02:  # Extremely low threshold
+                        x_coords = [point[0] for point in bbox]
+                        y_coords = [point[1] for point in bbox]
+                        bbox_formatted = [int(min(x_coords)), int(min(y_coords)), int(max(x_coords)), int(max(y_coords))]
+                        all_detections.append({
+                            'text': text.strip(),
+                            'bbox': bbox_formatted,
+                            'confidence': confidence,
+                            'method': 'aggressive'
+                        })
+            except Exception as e:
+                logger.error(f"Error in aggressive OCR: {str(e)}")
+            
+            # Remove duplicates with improved logic
             unique_detections = []
-            seen = set()
+            
+            # Sort by confidence (highest first) to keep the best detections
+            all_detections.sort(key=lambda x: x['confidence'], reverse=True)
             
             for det in all_detections:
-                # Create a key based on text and approximate position
-                text_key = det['text'].lower().strip()
-                bbox_key = (det['bbox'][0] // 10, det['bbox'][1] // 10)  # Approximate position
-                key = (text_key, bbox_key)
+                is_duplicate = False
+                current_text = det['text'].lower().strip()
+                current_bbox = det['bbox']
+                current_center = ((current_bbox[0] + current_bbox[2]) / 2, (current_bbox[1] + current_bbox[3]) / 2)
                 
-                if key not in seen:
-                    seen.add(key)
+                for existing in unique_detections:
+                    existing_text = existing['text'].lower().strip()
+                    existing_bbox = existing['bbox']
+                    existing_center = ((existing_bbox[0] + existing_bbox[2]) / 2, (existing_bbox[1] + existing_bbox[3]) / 2)
+                    
+                    # Calculate distance between centers
+                    distance = ((current_center[0] - existing_center[0])**2 + (current_center[1] - existing_center[1])**2)**0.5
+                    
+                    # Check for various types of duplicates
+                    if distance < 50:  # Within 50 pixels
+                        # Exact text match
+                        if current_text == existing_text:
+                            is_duplicate = True
+                            break
+                        
+                        # One text is contained in the other (e.g., "BEDROOM" vs "BEDROOM 1")
+                        if current_text in existing_text or existing_text in current_text:
+                            is_duplicate = True
+                            break
+                        
+                        # Similar text with small differences (OCR variations)
+                        if len(current_text) > 3 and len(existing_text) > 3:
+                            # Calculate text similarity
+                            common_chars = sum(1 for a, b in zip(current_text, existing_text) if a == b)
+                            similarity = common_chars / max(len(current_text), len(existing_text))
+                            if similarity > 0.8:  # 80% similar
+                                is_duplicate = True
+                                break
+                    
+                    # Check for bbox overlap (even if centers are far apart)
+                    overlap_x = max(0, min(current_bbox[2], existing_bbox[2]) - max(current_bbox[0], existing_bbox[0]))
+                    overlap_y = max(0, min(current_bbox[3], existing_bbox[3]) - max(current_bbox[1], existing_bbox[1]))
+                    overlap_area = overlap_x * overlap_y
+                    
+                    current_area = (current_bbox[2] - current_bbox[0]) * (current_bbox[3] - current_bbox[1])
+                    existing_area = (existing_bbox[2] - existing_bbox[0]) * (existing_bbox[3] - existing_bbox[1])
+                    
+                    # If bboxes overlap significantly and text is similar
+                    if overlap_area > 0:
+                        overlap_ratio = overlap_area / min(current_area, existing_area)
+                        if overlap_ratio > 0.5 and (current_text in existing_text or existing_text in current_text):
+                            is_duplicate = True
+                            break
+                
+                if not is_duplicate:
                     unique_detections.append(det)
             
             logger.info(f"Detected {len(unique_detections)} unique text regions from {len(all_detections)} total detections")
@@ -191,8 +265,8 @@ class FloorPlanOCRDetector:
         
         # Patterns that indicate descriptive text (not room names)
         descriptive_patterns = [
-            r'\d+\s*(bedroom|bathroom|bed|bath|br|ba)',  # "4 Bedrooms", "3 Bathrooms"
-            r'(bedroom|bathroom|bed|bath|br|ba)\s*/\s*\d+',  # "Bedrooms/3"
+            r'\d+\s*(bedrooms|bathrooms)',  # "4 Bedrooms", "3 Bathrooms" (plural only)
+            r'(bedrooms|bathrooms)\s*/\s*\d+',  # "Bedrooms/3" (plural only)
             r'\d+\s*bed\s*/\s*\d+\s*bath',  # "4 bed/3 bath"
             r'(sq\s*ft|square\s*feet|sqft)',  # Square footage
             r'(floor\s*plan|house\s*plan|plan\s*view)',  # Plan descriptions
@@ -201,6 +275,39 @@ class FloorPlanOCRDetector:
             r'(main\s*floor|upper\s*floor|lower\s*floor)',  # Floor descriptions
             r'(first\s*floor|second\s*floor|ground\s*floor)',  # Floor levels
             r'(lot\s*size|home\s*size|building\s*size)',  # Size descriptions
+        ]
+        
+        # Patterns for valid room names (including fractions and abbreviations)
+        valid_room_patterns = [
+            # English patterns
+            r'^\d+/\d+\s*(bath|bathroom)$',  # "1/2 Bath", "3/4 Bathroom"
+            r'^(half|quarter)\s*(bath|bathroom)$',  # "Half Bath", "Quarter Bathroom"
+            r'^(powder|guest|master|en)\s*(room|bath|bathroom)$',  # "Powder Room", "Guest Bath"
+            r'^(walk|walk-in)\s*(closet|pantry)$',  # "Walk-in Closet"
+            
+            # Korean patterns (common room names)
+            r'.*?(주방|부엌)',  # Kitchen
+            r'.*?(거실|응접실)',  # Living room
+            r'.*?(침실|안방|방)',  # Bedroom
+            r'.*?(화장실|욕실|변소)',  # Bathroom
+            r'.*?(식당|다이닝)',  # Dining room
+            r'.*?(서재|공부방|사무실)',  # Study/Office
+            r'.*?(현관|입구)',  # Entrance
+            r'.*?(베란다|발코니)',  # Balcony
+            r'.*?(다용도실|세탁실)',  # Utility room
+            r'.*?(창고|저장실)',  # Storage
+            r'.*?(드레스룸|옷장)',  # Dressing room/Closet
+            r'.*?(팬트리)',  # Pantry
+            r'.*?(계단|층계)',  # Stairs
+        ]
+        
+        # Korean room keywords for additional validation
+        korean_room_keywords = [
+            '주방', '부엌', '거실', '응접실', '침실', '안방', '방',
+            '화장실', '욕실', '변소', '식당', '다이닝', '서재',
+            '공부방', '사무실', '현관', '입구', '베란다', '발코니',
+            '다용도실', '세탁실', '창고', '저장실', '드레스룸',
+            '옷장', '팬트리', '계단', '층계'
         ]
         
         for det in detections:
@@ -216,30 +323,65 @@ class FloorPlanOCRDetector:
                 logger.debug(f"Filtered watermark: {text}")
                 continue
             
-            # Skip descriptive patterns
-            is_descriptive = False
-            for pattern in descriptive_patterns:
+            # Skip standalone numbers (likely room numbers detected separately)
+            if text.strip().isdigit() and len(text.strip()) <= 2:
+                logger.debug(f"Filtered standalone number: {text}")
+                continue
+            
+            # Skip single characters or very short text (likely OCR noise)
+            if len(text.strip()) <= 1:
+                logger.debug(f"Filtered single character: {text}")
+                continue
+            
+            # Check if it's a valid room name first (before filtering)
+            is_valid_room = False
+            
+            # Check English patterns (case-insensitive)
+            for pattern in valid_room_patterns:
                 if re.search(pattern, text_lower):
-                    logger.debug(f"Filtered descriptive pattern '{pattern}': {text}")
-                    is_descriptive = True
+                    logger.debug(f"Kept valid room pattern '{pattern}': {text}")
+                    is_valid_room = True
                     break
             
-            if is_descriptive:
-                continue
+            # Check Korean keywords (case-sensitive for Korean)
+            if not is_valid_room:
+                for keyword in korean_room_keywords:
+                    if keyword in text:  # Korean text is case-sensitive
+                        logger.debug(f"Kept Korean room keyword '{keyword}': {text}")
+                        is_valid_room = True
+                        break
             
-            # Skip text with numbers and room counts (like "4 Bedrooms/3 Bathrooms")
-            if re.search(r'\d+.*\d+', text) and any(word in text_lower for word in ['bedroom', 'bathroom', 'bed', 'bath']):
-                logger.debug(f"Filtered room count: {text}")
-                continue
+            # If it's a valid room, skip all other filters
+            if not is_valid_room:
+                # Skip descriptive patterns
+                is_descriptive = False
+                for pattern in descriptive_patterns:
+                    if re.search(pattern, text_lower):
+                        logger.debug(f"Filtered descriptive pattern '{pattern}': {text}")
+                        is_descriptive = True
+                        break
+                
+                if is_descriptive:
+                    continue
+                
+                # Skip text with numbers and room counts (like "4 Bedrooms/3 Bathrooms")
+                if re.search(r'\d+.*\d+', text) and any(word in text_lower for word in ['bedrooms', 'bathrooms']):
+                    logger.debug(f"Filtered room count: {text}")
+                    continue
             
             # Skip very long text (likely descriptions or titles)
-            if len(text) > 30:  # Reduced from 50 to catch more descriptive text
+            # Korean text can be more compact, so adjust length limits
+            max_length = 20 if any('\u3130' <= c <= '\u318F' or '\uAC00' <= c <= '\uD7A3' for c in text) else 30
+            if len(text) > max_length:
                 logger.debug(f"Filtered long text: {text}")
                 continue
             
             # Skip text with multiple words that might be descriptive
+            # Korean text doesn't use spaces the same way, so be more lenient
             words = text.split()
-            if len(words) > 3:  # More than 3 words is likely descriptive
+            has_korean = any('\u3130' <= c <= '\u318F' or '\uAC00' <= c <= '\uD7A3' for c in text)
+            max_words = 5 if has_korean else 3  # Allow more "words" for Korean mixed text
+            if len(words) > max_words:
                 logger.debug(f"Filtered multi-word text: {text}")
                 continue
             
@@ -280,6 +422,36 @@ class FloorPlanOCRDetector:
         
         logger.info(f"Filtered to {len(filtered)} space names from {len(detections)} detections")
         return filtered
+    
+    def _clean_room_name(self, text: str) -> str:
+        """
+        Clean up room name text by removing common OCR artifacts and extra characters.
+        
+        Args:
+            text: Raw OCR text
+            
+        Returns:
+            Cleaned room name
+        """
+        # Remove extra whitespace
+        cleaned = text.strip()
+        
+        # Remove common OCR artifacts
+        cleaned = re.sub(r'[^\w\s/\-가-힣]', '', cleaned)  # Keep alphanumeric, spaces, slashes, hyphens, Korean
+        
+        # Remove trailing numbers that might be room numbers detected as part of the name
+        # But keep fractions like "1/2"
+        if not re.search(r'\d+/\d+', cleaned):  # If it's not a fraction
+            cleaned = re.sub(r'\s+\d+$', '', cleaned)  # Remove trailing numbers
+        
+        # Clean up multiple spaces
+        cleaned = re.sub(r'\s+', ' ', cleaned)
+        
+        # Capitalize properly for English text
+        if not any('\u3130' <= c <= '\u318F' or '\uAC00' <= c <= '\uD7A3' for c in cleaned):  # If not Korean
+            cleaned = cleaned.title()
+        
+        return cleaned.strip()
 
     def get_space_names(self, image: np.ndarray, wall_bboxes: Optional[List[List[int]]] = None) -> List[Dict]:
         """
@@ -299,12 +471,15 @@ class FloorPlanOCRDetector:
             # Apply minimal filtering
             filtered_regions = self.filter_space_names(text_regions, image.shape[:2])
             
-            # Format as space names
+            # Format as space names with text cleanup
             space_names = []
             for i, region in enumerate(filtered_regions):
+                # Clean up the text
+                cleaned_text = self._clean_room_name(region['text'])
+                
                 space_name = {
                     'id': f'SPACE_{i+1}',
-                    'name': region['text'],
+                    'name': cleaned_text,
                     'bbox': region['bbox'],
                     'confidence': region['confidence'],
                     'method': region.get('method', 'unknown'),

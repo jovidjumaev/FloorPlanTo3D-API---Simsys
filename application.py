@@ -2555,9 +2555,9 @@ def create_wall_visualization(original_image, model_results, wall_parameters, ju
 			pos = pos.tolist()
 		
 		# Draw junction circle
-		radius = 12
+		radius = 6
 		draw.ellipse([pos[0]-radius, pos[1]-radius, pos[0]+radius, pos[1]+radius], 
-					fill=junction_color, outline=(0, 0, 0), width=3)
+					fill=junction_color, outline=(0, 0, 0), width=2)
 		
 		# Draw junction ID
 		try:
