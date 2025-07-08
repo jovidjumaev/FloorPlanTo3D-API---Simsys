@@ -67,6 +67,9 @@ import numpy as np
 from skimage.draw import line as skimage_line
 import time
 
+# Import OCR detector
+from ocr_detector import detect_space_names, detect_text_in_region
+
 # Global variables
 global _model
 global cfg
@@ -2197,9 +2200,32 @@ def visualize_wall_analysis():
 			print(f"Analyzed {len(detailed_windows)} windows")
 		print(f"Time - window analysis: {time.time()-t0:.2f}s")
 		
+		# Perform OCR detection for space names
+		t0 = time.time()
+		print("Starting OCR detection for space names...")
+		space_names = detect_space_names(numpy.array(original_image))
+		
+		# Convert space name coordinates to millimeters
+		for space in space_names:
+			# Add millimeter coordinates for centerpoint
+			space['center_mm'] = {
+				'x': float(pixels_to_mm(space['center']['x'], scale_factor_mm_per_pixel)),
+				'y': float(pixels_to_mm(space['center']['y'], scale_factor_mm_per_pixel))
+			}
+			
+			# Add millimeter coordinates for bounding box
+			space['bbox_mm'] = {
+				'x1': float(pixels_to_mm(space['bbox'][0], scale_factor_mm_per_pixel)),
+				'y1': float(pixels_to_mm(space['bbox'][1], scale_factor_mm_per_pixel)),
+				'x2': float(pixels_to_mm(space['bbox'][2], scale_factor_mm_per_pixel)),
+				'y2': float(pixels_to_mm(space['bbox'][3], scale_factor_mm_per_pixel))
+			}
+		
+		print(f"OCR detected {len(space_names)} space names in {time.time()-t0:.2f}s")
+		
 		# Create enhanced visualization
 		t0 = time.time()
-		vis_image = create_wall_visualization(original_image, r, wall_parameters, junction_analysis, w, h, scale_factor_mm_per_pixel, exterior_walls)
+		vis_image = create_wall_visualization(original_image, r, wall_parameters, junction_analysis, w, h, scale_factor_mm_per_pixel, exterior_walls, space_names)
 		print(f"Time - visualization drawing: {time.time()-t0:.2f}s")
 		print("Visualization image drawn; saving files …")
 		
@@ -2252,6 +2278,11 @@ def visualize_wall_analysis():
 						"vertical": sum(1 for d in detailed_windows if d["window_type"] == "vertical")
 					},
 					"glazing_types": {}
+				},
+				"space_names": {
+					"total_spaces_detected": len(space_names),
+					"average_confidence": float(numpy.mean([s["confidence"] for s in space_names])) if space_names else 0,
+					"languages_detected": list(set([s.get("language", "unknown") for s in space_names])) if space_names else []
 				}
 			},
 			"walls": {
@@ -2266,6 +2297,20 @@ def visualize_wall_analysis():
 			},
 			"windows": {
 				"detailed_windows": detailed_windows
+			},
+			"space_names": {
+				"total_spaces_detected": len(space_names),
+				"spaces": space_names,
+				"detection_summary": {
+					"average_confidence": float(numpy.mean([s["confidence"] for s in space_names])) if space_names else 0,
+					"confidence_range": {
+						"min": float(min([s["confidence"] for s in space_names])) if space_names else 0,
+						"max": float(max([s["confidence"] for s in space_names])) if space_names else 0
+					},
+					"detection_methods": list(set([s.get("method", "unknown") for s in space_names])) if space_names else [],
+					"centerpoints_mm": [s["center_mm"] for s in space_names],
+					"centerpoints_px": [s["center"] for s in space_names]
+				}
 			}
 		}
 		
@@ -2290,6 +2335,7 @@ def visualize_wall_analysis():
 			"total_doors": len(detailed_doors),
 			"total_windows": len(detailed_windows),
 			"total_junctions": len(junction_analysis),
+			"total_space_names": len(space_names),
 			"comprehensive_summary": {
 				"wall_count": len(wall_parameters),
 				"exterior_wall_count": len(exterior_walls),
@@ -2297,6 +2343,7 @@ def visualize_wall_analysis():
 				"door_count": len(detailed_doors),
 				"window_count": len(detailed_windows),
 				"junction_count": len(junction_analysis),
+				"space_name_count": len(space_names),
 				"total_wall_length_mm": sum(w["length"] for w in wall_parameters),
 				"total_wall_thickness_mm": sum(w["thickness"]["average"] for w in wall_parameters),
 				"perimeter_length_mm": perimeter_dimensions["total_perimeter_length"],
@@ -2308,8 +2355,8 @@ def visualize_wall_analysis():
 		traceback.print_exc() 
 		return jsonify({"error": str(e)}), 500
 
-def create_wall_visualization(original_image, model_results, wall_parameters, junction_analysis, image_width, image_height, scale_factor_mm_per_pixel=1.0, exterior_walls=None):
-	"""Create enhanced visualization with wall centerlines, junctions, and parameters"""
+def create_wall_visualization(original_image, model_results, wall_parameters, junction_analysis, image_width, image_height, scale_factor_mm_per_pixel=1.0, exterior_walls=None, space_names=None):
+	"""Create enhanced visualization with wall centerlines, junctions, parameters, and OCR-detected space names"""
 	
 	# Convert to RGB if needed
 	if original_image.mode != 'RGB':
@@ -2659,6 +2706,64 @@ def create_wall_visualization(original_image, model_results, wall_parameters, ju
 						(cx < legend_area_x and ey < legend_area_y)):
 						continue
 					draw.line([(cx, sy), (cx, ey)], fill=centerline_color, width=4)
+
+	# Draw OCR-detected space names
+	if space_names:
+		print(f"Drawing {len(space_names)} detected space names on visualization")
+		space_name_color = (255, 128, 0)  # Orange color for space names
+		space_center_color = (255, 0, 128)  # Pink color for space centerpoints
+		
+		try:
+			space_font = ImageFont.truetype("/System/Library/Fonts/Arial.ttf", 14)
+		except:
+			space_font = ImageFont.load_default()
+		
+		for space in space_names:
+			bbox = space['bbox']
+			x1, y1, x2, y2 = bbox
+			text = space['name']
+			confidence = space['confidence']
+			
+			# Calculate centerpoint of the text
+			center_x = (x1 + x2) / 2
+			center_y = (y1 + y2) / 2
+			
+			# Draw bounding box around detected text
+			draw.rectangle([x1, y1, x2, y2], outline=space_name_color, width=2)
+			
+			# Draw centerpoint circle
+			center_radius = 8
+			draw.ellipse([center_x - center_radius, center_y - center_radius, 
+						 center_x + center_radius, center_y + center_radius], 
+						fill=space_center_color, outline=(0, 0, 0), width=2)
+			
+			# Draw small cross inside the circle for better visibility
+			cross_size = 4
+			draw.line([center_x - cross_size, center_y, center_x + cross_size, center_y], 
+					 fill=(255, 255, 255), width=2)
+			draw.line([center_x, center_y - cross_size, center_x, center_y + cross_size], 
+					 fill=(255, 255, 255), width=2)
+			
+			# Draw text label with confidence
+			label = f"{text} ({confidence:.2f})"
+			text_bbox = draw.textbbox((0, 0), label, font=space_font)
+			text_width = text_bbox[2] - text_bbox[0]
+			text_height = text_bbox[3] - text_bbox[1]
+			
+			# Position label above the text bounding box
+			text_x = x1
+			text_y = max(0, y1 - text_height - 5)
+			
+			# Draw text background
+			draw.rectangle([text_x, text_y, text_x + text_width, text_y + text_height], 
+						  fill=space_name_color, outline=space_name_color)
+			
+			# Draw text
+			draw.text((text_x, text_y), label, fill=(255, 255, 255), font=space_font)
+		
+		# Add space names to legend
+		legend_items.append(("Space Names (Orange boxes)", space_name_color))
+		legend_items.append(("Space Centers (Pink circles)", space_center_color))
 
 	return vis_image
 
