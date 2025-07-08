@@ -564,14 +564,22 @@ def createVisualization(original_image, model_results, image_width, image_height
 		# Draw bounding box
 		draw.rectangle([x1, y1, x2, y2], outline=color, width=3)
 		
-		# Enhanced door visualization with orientation
+		# Enhanced door visualization with orientation and centerpoint
 		if class_id == 3 and masks is not None:  # door
 			door_mask = masks[:, :, i] if i < masks.shape[2] else None
 			orientation = analyzeDoorOrientation(door_mask, bbox, image_width, image_height)
 			
-			# Draw door orientation arrow
+			# Calculate door center
 			center_x = (x1 + x2) / 2
 			center_y = (y1 + y2) / 2
+			
+			# Draw door centerpoint (cyan circle)
+			center_radius = 8
+			draw.ellipse([center_x - center_radius, center_y - center_radius, 
+						 center_x + center_radius, center_y + center_radius], 
+						fill=(0, 255, 255), outline=(0, 0, 0), width=2)
+			
+			# Draw door orientation arrow
 			arrow_length = min((x2 - x1), (y2 - y1)) * 0.4
 			
 			# Determine arrow direction based on estimated swing
@@ -1019,6 +1027,8 @@ def analyze_door_orientation():
 	
 	try:
 		imagefile = Image.open(request.files['image'].stream)
+		# Get scale factor from request (default to 1.0 if not provided)
+		scale_factor_mm_per_pixel = float(request.form.get('scale_factor_mm_per_pixel', 1.0))
 		image, w, h = myImageLoader(imagefile)
 		print(f"Analyzing door orientations for image: {h}x{w}")
 		
@@ -1052,38 +1062,43 @@ def analyze_door_orientation():
 			
 			# Basic door properties
 			y1, x1, y2, x2 = bbox
+			# Orientation analysis
+			orientation = analyzeDoorOrientation(door_mask, bbox, w, h)
+			# Determine width based on orientation
+			if orientation.get("door_type") == "vertical":
+				width_px = abs(x2 - x1)
+			else:
+				width_px = abs(y2 - y1)
+			width_mm = pixels_to_mm(width_px, scale_factor_mm_per_pixel)
+
 			door_width = float(x2 - x1)
 			door_height = float(y2 - y1)
 			door_area = door_width * door_height
-			
-			# Orientation analysis
-			orientation = analyzeDoorOrientation(door_mask, bbox, w, h)
-			
+
 			# Architectural analysis
 			door_bbox_dict = {"x1": float(x1), "y1": float(y1), "x2": float(x2), "y2": float(y2)}
 			architectural_notes = generateArchitecturalNotes(orientation, door_bbox_dict)
-			
+
 			# Build comprehensive door data
 			door_data = {
 				"door_id": i + 1,
 				"confidence": float(confidence),
-				"location": {
-					"bbox": door_bbox_dict,
-					"center": {
-						"x": float((x1 + x2) / 2),
-						"y": float((y1 + y2) / 2)
-					},
-					"relative_position": {
-						"from_left": f"{(x1/w)*100:.1f}%",
-						"from_top": f"{(y1/h)*100:.1f}%"
-					}
-				},
-				"dimensions": {
-					"width_px": door_width,
-					"height_px": door_height,
-					"area_px": door_area,
-					"aspect_ratio": door_width / door_height if door_height > 0 else 0
-				},
+				        "location": {
+            "center": {
+                "x": float(pixels_to_mm((x1 + x2) / 2, scale_factor_mm_per_pixel)),
+                "y": float(pixels_to_mm((y1 + y2) / 2, scale_factor_mm_per_pixel))
+            },
+            "relative_position": {
+                "from_left": f"{(x1/w)*100:.1f}%",
+                "from_top": f"{(y1/h)*100:.1f}%"
+            }
+        },
+        "dimensions": {
+            "width": width_mm,
+            "height": float(pixels_to_mm(door_height, scale_factor_mm_per_pixel)),
+            "area": float(pixels_to_mm(door_area, scale_factor_mm_per_pixel)),
+            "aspect_ratio": door_width / door_height if door_height > 0 else 0
+        },
 				"orientation": orientation,
 				"architectural_analysis": {
 					"door_type": "interior" if door_width < door_height else "entrance",
@@ -1092,7 +1107,6 @@ def analyze_door_orientation():
 					"notes": architectural_notes
 				}
 			}
-			
 			detailed_doors.append(door_data)
 		
 		# Overall door analysis summary
@@ -1120,7 +1134,9 @@ def analyze_door_orientation():
 			"metadata": {
 				"timestamp": datetime.now().isoformat(),
 				"image_dimensions": {"width": w, "height": h},
-				"analysis_type": "door_orientation_analysis"
+				"scale_factor_mm_per_pixel": scale_factor_mm_per_pixel,
+				"analysis_type": "door_orientation_analysis",
+				"units": "millimeters"
 			},
 			"summary": door_summary,
 			"detailed_doors": detailed_doors
@@ -2076,6 +2092,75 @@ def visualize_wall_analysis():
 				junction_data.update(convert_junction_position_to_mm(junction_data, scale_factor_mm_per_pixel))
 				junction_analysis.append(junction_data)
 		
+		# Extract and analyze doors
+		t0 = time.time()
+		door_indices = [i for i, class_id in enumerate(r['class_ids']) if class_id == 3]
+		detailed_doors = []
+		
+		if door_indices:
+			# Extract door-specific data
+			door_bboxes = [r['rois'][i] for i in door_indices]
+			door_scores = [r['scores'][i] for i in door_indices]
+			door_masks = r['masks'] if len(door_indices) > 0 else None
+			
+			# Perform detailed door analysis
+			for i, (bbox, confidence) in enumerate(zip(door_bboxes, door_scores)):
+				# Get the correct mask index for this door
+				door_mask_index = door_indices[i] if i < len(door_indices) else None
+				door_mask = door_masks[:, :, door_mask_index] if door_masks is not None and door_mask_index is not None else None
+				
+				# Basic door properties
+				y1, x1, y2, x2 = bbox
+				# Orientation analysis
+				orientation = analyzeDoorOrientation(door_mask, bbox, w, h)
+				# Determine width based on orientation
+				if orientation.get("door_type") == "vertical":
+					width_px = abs(x2 - x1)
+				else:
+					width_px = abs(y2 - y1)
+				width_mm = pixels_to_mm(width_px, scale_factor_mm_per_pixel)
+
+				door_width = float(x2 - x1)
+				door_height = float(y2 - y1)
+				door_area = door_width * door_height
+
+				# Architectural analysis
+				door_bbox_dict = {"x1": float(x1), "y1": float(y1), "x2": float(x2), "y2": float(y2)}
+				architectural_notes = generateArchitecturalNotes(orientation, door_bbox_dict)
+				
+				# Build comprehensive door data
+				door_data = {
+					"door_id": i + 1,
+					"confidence": float(confidence),
+					"location": {
+						"center": {
+							"x": float(pixels_to_mm((x1 + x2) / 2, scale_factor_mm_per_pixel)),
+							"y": float(pixels_to_mm((y1 + y2) / 2, scale_factor_mm_per_pixel))
+						},
+						"relative_position": {
+							"from_left": f"{(x1/w)*100:.1f}%",
+							"from_top": f"{(y1/h)*100:.1f}%"
+						}
+					},
+					"dimensions": {
+						"width": width_mm,
+						"height": float(pixels_to_mm(door_height, scale_factor_mm_per_pixel)),
+						"area": float(pixels_to_mm(door_area, scale_factor_mm_per_pixel)),
+						"aspect_ratio": door_width / door_height if door_height > 0 else 0
+					},
+					"orientation": orientation,
+					"architectural_analysis": {
+						"door_type": "interior" if door_width < door_height else "entrance",
+						"size_category": categorize_door_size(door_width, door_height),
+						"accessibility": assess_door_accessibility(door_width),
+						"notes": architectural_notes
+					}
+				}
+				detailed_doors.append(door_data)
+			
+			print(f"Analyzed {len(detailed_doors)} doors")
+		print(f"Time - door analysis: {time.time()-t0:.2f}s")
+		
 		# Create enhanced visualization
 		t0 = time.time()
 		vis_image = create_wall_visualization(original_image, r, wall_parameters, junction_analysis, w, h, scale_factor_mm_per_pixel)
@@ -2096,26 +2181,55 @@ def visualize_wall_analysis():
 				"timestamp": datetime.now().isoformat(),
 				"image_dimensions": {"width": w, "height": h},
 				"scale_factor_mm_per_pixel": scale_factor_mm_per_pixel,
-				"analysis_type": "wall_visualization_analysis",
+				"analysis_type": "comprehensive_floor_plan_analysis",
 				"units": "millimeters"
 			},
-			"individual_walls": wall_parameters,
-			"junctions": junction_analysis
+			"summary": {
+				"walls": {
+					"total_walls": len(wall_parameters),
+					"total_junctions": len(junction_analysis),
+					"total_length_mm": sum(w["length"] for w in wall_parameters),
+					"average_thickness_mm": sum(w["thickness"]["average"] for w in wall_parameters) / len(wall_parameters) if wall_parameters else 0
+				},
+				"doors": {
+					"total_doors": len(detailed_doors),
+					"average_confidence": float(numpy.mean([d["confidence"] for d in detailed_doors])) if detailed_doors else 0,
+					"door_orientations": {
+						"horizontal": sum(1 for d in detailed_doors if d["orientation"]["door_type"] == "horizontal"),
+						"vertical": sum(1 for d in detailed_doors if d["orientation"]["door_type"] == "vertical")
+					},
+					"swing_directions": {}
+				}
+			},
+			"walls": {
+				"individual_walls": wall_parameters,
+				"junctions": junction_analysis
+			},
+			"doors": {
+				"detailed_doors": detailed_doors
+			}
 		}
+		
+		# Count door swing directions
+		for door in detailed_doors:
+			swing = door["orientation"]["estimated_swing"]
+			wall_analysis["summary"]["doors"]["swing_directions"][swing] = wall_analysis["summary"]["doors"]["swing_directions"].get(swing, 0) + 1
 		
 		wall_json_filename = f"walls{test_num}.json"
 		save_wall_analysis(wall_analysis, wall_json_filename)
 		
 		return jsonify({
-			"message": "Wall analysis visualization created successfully",
+			"message": "Comprehensive floor plan analysis completed successfully",
 			"visualization_file": wall_vis_filename,
 			"analysis_file": wall_json_filename,
 			"total_walls": len(wall_parameters),
+			"total_doors": len(detailed_doors),
 			"total_junctions": len(junction_analysis),
-			"wall_summary": {
+			"comprehensive_summary": {
 				"wall_count": len(wall_parameters),
+				"door_count": len(detailed_doors),
 				"junction_count": len(junction_analysis),
-				"total_length_mm": sum(w["length"] for w in wall_parameters),
+				"total_wall_length_mm": sum(w["length"] for w in wall_parameters),
 				"total_wall_thickness_mm": sum(w["thickness"]["average"] for w in wall_parameters)
 			}
 		})
@@ -2167,10 +2281,20 @@ def create_wall_visualization(original_image, model_results, wall_parameters, ju
 		width = 1 if class_id == 1 else 3
 		draw.rectangle([x1, y1, x2, y2], outline=color, width=width)
 		
-		# Enhanced door visualization with orientation
+		# Enhanced door visualization with orientation and centerpoint
 		if class_id == 3 and masks is not None:  # door
 			door_mask = masks[:, :, i] if i < masks.shape[2] else None
 			orientation = analyzeDoorOrientation(door_mask, bbox, image_width, image_height)
+			
+			# Calculate door center
+			center_x = (x1 + x2) / 2
+			center_y = (y1 + y2) / 2
+			
+			# Draw door centerpoint (cyan circle)
+			center_radius = 8
+			draw.ellipse([center_x - center_radius, center_y - center_radius, 
+						 center_x + center_radius, center_y + center_radius], 
+						fill=(0, 255, 255), outline=(0, 0, 0), width=2)
 			
 			# Yellow arrow drawing disabled as per user request
 			pass
@@ -2333,6 +2457,7 @@ def create_wall_visualization(original_image, model_results, wall_parameters, ju
 		("Junctions (Magenta)", junction_color),
 		("Windows (Green)", (0, 255, 0)),
 		("Doors (Blue)", (0, 0, 255)),
+		("Door Centers (Cyan circles)", (0, 255, 255)),
 		("Door Arrows (Yellow)", (255, 255, 0))
 	]
 	
@@ -2524,6 +2649,20 @@ def convert_junction_position_to_mm(junction_data, scale_factor_mm_per_pixel):
         junction_mm["position"] = [x_mm, y_mm]
     
     return junction_mm
+
+def convert_door_center_to_mm(door_data, scale_factor_mm_per_pixel):
+    """Convert door center coordinates from pixels to millimeters"""
+    if not door_data or "location" not in door_data or "center" not in door_data["location"]:
+        return door_data
+    
+    door_mm = door_data.copy()
+    center_pixels = door_data["location"]["center"]
+    if "x" in center_pixels and "y" in center_pixels:
+        x_mm = pixels_to_mm(center_pixels["x"], scale_factor_mm_per_pixel)
+        y_mm = pixels_to_mm(center_pixels["y"], scale_factor_mm_per_pixel)
+        door_mm["location"]["center_mm"] = {"x": x_mm, "y": y_mm}
+    
+    return door_mm
 
 if __name__ == '__main__':
 	application.debug = True
