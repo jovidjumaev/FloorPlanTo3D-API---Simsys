@@ -14,18 +14,189 @@ import os
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Simple watermark keywords to filter out (English and Korean)
+# Comprehensive watermark and non-space keywords to filter out (English and Korean)
 WATERMARK_KEYWORDS = [
-    # English watermarks
+    # English watermarks and metadata
     'alamy', 'shutterstock', 'getty', 'watermark', 'stock', 'copyright', '©', 'www', 'http', '.com',
-    # Korean watermarks
-    '워터마크', '저작권', '샘플', '견본', '미리보기'
+    'sample', 'preview', 'demo', 'example', 'template', 'draft', 'concept',
+    'architect', 'designer', 'company', 'inc', 'ltd', 'corp', 'llc',
+    'property', 'real estate', 'realty', 'development', 'construction',
+    'not to scale', 'scale', 'dimensions', 'measurements', 'drawing',
+    'blueprint', 'floor plan', 'site plan', 'elevation', 'section',
+    
+    # Korean watermarks and metadata
+    '워터마크', '저작권', '샘플', '견본', '미리보기', '데모', '예시', '템플릿',
+    '초안', '컨셉', '건축', '설계', '회사', '부동산', '개발', '건설',
+    '축척', '치수', '측정', '도면', '설계도', '평면도', '배치도'
 ]
+
+# Comprehensive room/space vocabulary for both residential and office environments
+class SpaceVocabulary:
+    """Comprehensive vocabulary for space names in multiple languages and contexts"""
+    
+    # English residential spaces
+    ENGLISH_RESIDENTIAL = [
+        # Basic rooms
+        'bedroom', 'living room', 'kitchen', 'bathroom', 'dining room', 'family room',
+        'guest room', 'master bedroom', 'master bath', 'powder room', 'half bath',
+        'full bath', 'guest bath', 'en suite', 'ensuite',
+        
+        # Specialized residential spaces
+        'foyer', 'entryway', 'mudroom', 'laundry room', 'utility room', 'pantry',
+        'walk-in closet', 'closet', 'linen closet', 'coat closet', 'storage',
+        'basement', 'attic', 'garage', 'den', 'study', 'library', 'home office',
+        'playroom', 'nursery', 'sunroom', 'porch', 'patio', 'deck', 'balcony',
+        'terrace', 'conservatory', 'solarium', 'great room', 'bonus room',
+        'media room', 'theater room', 'wine cellar', 'workshop', 'craft room',
+        'exercise room', 'gym', 'sauna', 'steam room', 'hot tub', 'pool house',
+        
+        # Fractional bathrooms
+        '1/2 bath', '3/4 bath', 'quarter bath', 'half bath', 'powder bath',
+        
+        # Room variations
+        'bed', 'bath', 'br', 'ba', 'rm', 'kit', 'lr', 'dr', 'fr'
+    ]
+    
+    # English office/commercial spaces
+    ENGLISH_OFFICE = [
+        # Executive and management
+        'office', 'executive office', 'ceo office', 'president office', 'director office',
+        'manager office', 'supervisor office', 'private office', 'corner office',
+        
+        # Meeting and collaboration spaces
+        'conference room', 'meeting room', 'boardroom', 'training room', 'seminar room',
+        'presentation room', 'war room', 'huddle room', 'phone booth', 'collaboration space',
+        'team room', 'project room', 'focus room', 'quiet room', 'think tank',
+        
+        # Work areas
+        'open office', 'cubicle', 'workstation', 'desk area', 'bullpen', 'workspace',
+        'coworking space', 'hot desk', 'flex space', 'activity based working',
+        
+        # Reception and lobby
+        'reception', 'lobby', 'waiting area', 'entrance', 'foyer', 'atrium',
+        'welcome area', 'front desk', 'concierge', 'security desk',
+        
+        # Support spaces
+        'break room', 'kitchen', 'kitchenette', 'cafeteria', 'dining area',
+        'coffee bar', 'pantry', 'lounge', 'rest area', 'wellness room',
+        'lactation room', 'prayer room', 'meditation room', 'quiet zone',
+        
+        # Storage and utility
+        'storage room', 'supply room', 'filing room', 'archive', 'records room',
+        'mail room', 'copy room', 'print room', 'server room', 'it room',
+        'electrical room', 'mechanical room', 'janitor closet', 'cleaning closet',
+        'utility closet', 'coat room', 'locker room',
+        
+        # Specialized office spaces
+        'laboratory', 'lab', 'research room', 'testing room', 'quality control',
+        'design studio', 'creative space', 'workshop', 'maker space',
+        'video conference room', 'recording studio', 'broadcast room',
+        'control room', 'monitoring room', 'security office',
+        
+        # Health and safety
+        'first aid room', 'medical room', 'nurse station', 'wellness center',
+        'fitness room', 'gym', 'shower room', 'changing room',
+        
+        # Facilities
+        'restroom', 'bathroom', 'washroom', 'wc', 'toilet', 'mens room',
+        'womens room', 'unisex bathroom', 'accessible bathroom',
+        
+        # Abbreviations and short forms
+        'conf rm', 'mtg rm', 'br rm', 'stor', 'mech', 'elec', 'it',
+        'hr', 'admin', 'acct', 'fin', 'ops', 'dev', 'qa', 'rd'
+    ]
+    
+    # Korean residential spaces
+    KOREAN_RESIDENTIAL = [
+        # Basic rooms
+        '방', '침실', '안방', '작은방', '큰방', '거실', '응접실', '부엌', '주방',
+        '화장실', '욕실', '변소', '세면실', '샤워실', '목욕탕',
+        
+        # Specialized residential spaces
+        '현관', '입구', '현관문', '현관홀', '복도', '계단', '층계',
+        '다용도실', '세탁실', '보일러실', '창고', '저장실', '수납공간',
+        '드레스룸', '옷장', '붙박이장', '팬트리', '다락방', '지하실',
+        '베란다', '발코니', '테라스', '마당', '정원', '차고', '주차장',
+        
+        # Study and work spaces
+        '서재', '공부방', '사무실', '작업실', '취미실', '놀이방',
+        '운동실', '헬스장', '사우나', '찜질방',
+        
+        # Dining and kitchen variations
+        '식당', '다이닝', '아침식사공간', '간이주방', '팬트리',
+        
+        # Bathroom variations
+        '화장실', '욕실', '샤워실', '세면실', '파우더룸', '반욕실'
+    ]
+    
+    # Korean office/commercial spaces
+    KOREAN_OFFICE = [
+        # Executive offices
+        '사무실', '개인사무실', '임원실', '대표실', '사장실', '부장실',
+        '과장실', '팀장실', '실장실', '본부장실', '이사실',
+        
+        # Meeting spaces
+        '회의실', '대회의실', '소회의실', '이사회실', '세미나실',
+        '교육실', '강의실', '프레젠테이션룸', '화상회의실',
+        '미팅룸', '협업공간', '토론실', '브레인스토밍룸',
+        
+        # Work areas
+        '사무공간', '업무공간', '개방형사무실', '칸막이사무실',
+        '워크스테이션', '데스크', '좌석', '팀공간', '프로젝트룸',
+        
+        # Reception and entrance
+        '접수처', '리셉션', '로비', '현관', '입구', '대기실',
+        '안내데스크', '프론트데스크', '보안데스크', '경비실',
+        
+        # Break and dining areas
+        '휴게실', '라운지', '카페테리아', '구내식당', '급식실',
+        '커피바', '다과실', '주방', '간이주방', '팬트리',
+        '식당', '식사공간', '직원식당',
+        
+        # Storage and utility
+        '창고', '보관실', '자료실', '서류보관실', '아카이브',
+        '우편실', '복사실', '인쇄실', '서버실', '전산실',
+        '통신실', '전기실', '기계실', '보일러실', '청소용품실',
+        '관리실', '시설관리실', '라커룸', '탈의실',
+        
+        # Specialized spaces
+        '연구실', '실험실', '개발실', '디자인실', '스튜디오',
+        '작업실', '제작실', '품질관리실', '검사실', '테스트룸',
+        '방송실', '녹음실', '편집실', '제어실', '모니터링실',
+        
+        # Health and facilities
+        '의무실', '보건실', '상담실', '휴식실', '수유실',
+        '기도실', '명상실', '헬스장', '운동실', '샤워실',
+        
+        # Bathrooms
+        '화장실', '남자화장실', '여자화장실', '장애인화장실',
+        '공용화장실', '직원화장실', '세면실',
+        
+        # Departments and functions
+        '인사부', '총무부', '회계부', '재무부', '영업부',
+        '마케팅부', '기획부', '개발부', '연구개발부', '품질보증부',
+        '고객서비스부', '기술지원부', '교육부', '법무부'
+    ]
+    
+    @classmethod
+    def get_all_english_spaces(cls):
+        """Get all English space names"""
+        return cls.ENGLISH_RESIDENTIAL + cls.ENGLISH_OFFICE
+    
+    @classmethod
+    def get_all_korean_spaces(cls):
+        """Get all Korean space names"""
+        return cls.KOREAN_RESIDENTIAL + cls.KOREAN_OFFICE
+    
+    @classmethod
+    def get_all_spaces(cls):
+        """Get all space names in both languages"""
+        return cls.get_all_english_spaces() + cls.get_all_korean_spaces()
 
 class FloorPlanOCRDetector:
     """
     OCR detector specifically designed for floor plan text recognition.
-    Detects space names and labels in multiple languages.
+    Detects space names and labels in multiple languages for both residential and office environments.
     """
     
     def __init__(self, languages=['en', 'ko']):
@@ -38,6 +209,7 @@ class FloorPlanOCRDetector:
         """
         self.languages = languages
         self.reader = None
+        self.vocabulary = SpaceVocabulary()
         self._initialize_reader()
     
     def _initialize_reader(self):
@@ -251,7 +423,7 @@ class FloorPlanOCRDetector:
     
     def filter_space_names(self, detections: List[Dict], image_shape: Tuple[int, int]) -> List[Dict]:
         """
-        Apply minimal filtering to keep only likely space names.
+        Apply intelligent filtering to keep only likely space names using comprehensive vocabulary.
         
         Args:
             detections: List of text detections
@@ -263,27 +435,39 @@ class FloorPlanOCRDetector:
         img_h, img_w = image_shape
         filtered = []
         
+        # Get comprehensive vocabulary
+        all_english_spaces = self.vocabulary.get_all_english_spaces()
+        all_korean_spaces = self.vocabulary.get_all_korean_spaces()
+        
         # Patterns that indicate descriptive text (not room names)
         descriptive_patterns = [
             r'\d+\s*(bedrooms|bathrooms)',  # "4 Bedrooms", "3 Bathrooms" (plural only)
             r'(bedrooms|bathrooms)\s*/\s*\d+',  # "Bedrooms/3" (plural only)
             r'\d+\s*bed\s*/\s*\d+\s*bath',  # "4 bed/3 bath"
             r'(sq\s*ft|square\s*feet|sqft)',  # Square footage
-            r'(floor\s*plan|house\s*plan|plan\s*view)',  # Plan descriptions
+            r'(floor\s*plan|house\s*plan|plan\s*view|office\s*plan)',  # Plan descriptions
             r'(scale|drawing|blueprint|architect)',  # Technical terms
             r'(total|approx|approximately)',  # Measurement terms
             r'(main\s*floor|upper\s*floor|lower\s*floor)',  # Floor descriptions
             r'(first\s*floor|second\s*floor|ground\s*floor)',  # Floor levels
-            r'(lot\s*size|home\s*size|building\s*size)',  # Size descriptions
+            r'(lot\s*size|home\s*size|building\s*size|office\s*size)',  # Size descriptions
+            r'(suite\s*\d+|unit\s*\d+|floor\s*\d+)',  # Suite/unit numbers
+            r'(north|south|east|west|wing)',  # Directional descriptions
         ]
         
-        # Patterns for valid room names (including fractions and abbreviations)
+        # Enhanced patterns for valid room names (including fractions and abbreviations)
         valid_room_patterns = [
-            # English patterns
+            # English fractional patterns
             r'^\d+/\d+\s*(bath|bathroom)$',  # "1/2 Bath", "3/4 Bathroom"
             r'^(half|quarter)\s*(bath|bathroom)$',  # "Half Bath", "Quarter Bathroom"
+            
+            # English compound room patterns
             r'^(powder|guest|master|en)\s*(room|bath|bathroom)$',  # "Powder Room", "Guest Bath"
             r'^(walk|walk-in)\s*(closet|pantry)$',  # "Walk-in Closet"
+            r'^(conference|meeting|board)\s*(room|hall)$',  # "Conference Room"
+            r'^(break|lunch|staff)\s*(room|area)$',  # "Break Room"
+            r'^(server|storage|supply)\s*(room|closet)$',  # "Server Room"
+            r'^(executive|private|corner)\s*(office|room)$',  # "Executive Office"
             
             # Korean patterns (common room names)
             r'.*?(주방|부엌)',  # Kitchen
@@ -299,15 +483,9 @@ class FloorPlanOCRDetector:
             r'.*?(드레스룸|옷장)',  # Dressing room/Closet
             r'.*?(팬트리)',  # Pantry
             r'.*?(계단|층계)',  # Stairs
-        ]
-        
-        # Korean room keywords for additional validation
-        korean_room_keywords = [
-            '주방', '부엌', '거실', '응접실', '침실', '안방', '방',
-            '화장실', '욕실', '변소', '식당', '다이닝', '서재',
-            '공부방', '사무실', '현관', '입구', '베란다', '발코니',
-            '다용도실', '세탁실', '창고', '저장실', '드레스룸',
-            '옷장', '팬트리', '계단', '층계'
+            r'.*?(회의실|미팅룸)',  # Meeting room
+            r'.*?(휴게실|라운지)',  # Break room/Lounge
+            r'.*?(임원실|대표실)',  # Executive office
         ]
         
         for det in detections:
@@ -343,11 +521,34 @@ class FloorPlanOCRDetector:
                     is_valid_room = True
                     break
             
-            # Check Korean keywords (case-sensitive for Korean)
+            # Check comprehensive English vocabulary (exact and partial matches)
             if not is_valid_room:
-                for keyword in korean_room_keywords:
-                    if keyword in text:  # Korean text is case-sensitive
-                        logger.debug(f"Kept Korean room keyword '{keyword}': {text}")
+                for space_name in all_english_spaces:
+                    space_lower = space_name.lower()
+                    # Exact match
+                    if text_lower == space_lower:
+                        logger.debug(f"Kept exact English match '{space_name}': {text}")
+                        is_valid_room = True
+                        break
+                    # Partial match (space name contains the text or vice versa)
+                    elif (space_lower in text_lower and len(space_lower) > 2) or \
+                         (text_lower in space_lower and len(text_lower) > 2):
+                        logger.debug(f"Kept partial English match '{space_name}': {text}")
+                        is_valid_room = True
+                        break
+            
+            # Check comprehensive Korean vocabulary (case-sensitive for Korean)
+            if not is_valid_room:
+                for space_name in all_korean_spaces:
+                    # Exact match
+                    if text == space_name:
+                        logger.debug(f"Kept exact Korean match '{space_name}': {text}")
+                        is_valid_room = True
+                        break
+                    # Partial match (space name contains the text or vice versa)
+                    elif (space_name in text and len(space_name) > 1) or \
+                         (text in space_name and len(text) > 1):
+                        logger.debug(f"Kept partial Korean match '{space_name}': {text}")
                         is_valid_room = True
                         break
             
@@ -365,8 +566,20 @@ class FloorPlanOCRDetector:
                     continue
                 
                 # Skip text with numbers and room counts (like "4 Bedrooms/3 Bathrooms")
-                if re.search(r'\d+.*\d+', text) and any(word in text_lower for word in ['bedrooms', 'bathrooms']):
+                if re.search(r'\d+.*\d+', text) and any(word in text_lower for word in ['bedrooms', 'bathrooms', 'offices', 'rooms']):
                     logger.debug(f"Filtered room count: {text}")
+                    continue
+                
+                # Skip common office building descriptors
+                office_descriptors = [
+                    'floor plan', 'office plan', 'building plan', 'layout',
+                    'suite', 'level', 'floor', 'wing', 'zone', 'area',
+                    'north', 'south', 'east', 'west', 'central',
+                    'entrance', 'exit', 'corridor', 'hallway', 'lobby',
+                    'elevator', 'stairs', 'emergency', 'fire exit'
+                ]
+                if any(descriptor in text_lower for descriptor in office_descriptors) and not is_valid_room:
+                    logger.debug(f"Filtered office descriptor: {text}")
                     continue
             
             # Skip very long text (likely descriptions or titles)
