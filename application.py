@@ -112,6 +112,240 @@ def safe_logical_or(a, b):
 def safe_logical_not(a):
     """Safe wrapper for numpy.logical_not with proper boolean conversion"""
     return numpy.logical_not(numpy.asarray(a, dtype=bool))
+
+def line_intersects_rectangle(x1, y1, x2, y2, rect_x1, rect_y1, rect_x2, rect_y2):
+    """
+    Check if a line segment intersects with a rectangle.
+    
+    Args:
+        x1, y1, x2, y2: Line segment endpoints
+        rect_x1, rect_y1, rect_x2, rect_y2: Rectangle bounds
+    
+    Returns:
+        True if the line intersects the rectangle, False otherwise
+    """
+    # First check if either endpoint is inside the rectangle
+    if ((rect_x1 <= x1 <= rect_x2 and rect_y1 <= y1 <= rect_y2) or
+        (rect_x1 <= x2 <= rect_x2 and rect_y1 <= y2 <= rect_y2)):
+        return True
+    
+    # Check if line intersects any of the four rectangle edges
+    # Top edge
+    if line_segments_intersect(x1, y1, x2, y2, rect_x1, rect_y1, rect_x2, rect_y1):
+        return True
+    # Bottom edge  
+    if line_segments_intersect(x1, y1, x2, y2, rect_x1, rect_y2, rect_x2, rect_y2):
+        return True
+    # Left edge
+    if line_segments_intersect(x1, y1, x2, y2, rect_x1, rect_y1, rect_x1, rect_y2):
+        return True
+    # Right edge
+    if line_segments_intersect(x1, y1, x2, y2, rect_x2, rect_y1, rect_x2, rect_y2):
+        return True
+    
+    return False
+
+def line_segments_intersect(x1, y1, x2, y2, x3, y3, x4, y4):
+    """
+    Check if two line segments intersect.
+    
+    Args:
+        x1, y1, x2, y2: First line segment endpoints
+        x3, y3, x4, y4: Second line segment endpoints
+    
+    Returns:
+        True if the line segments intersect, False otherwise
+    """
+    # Calculate direction vectors
+    denom = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4)
+    
+    if abs(denom) < 1e-10:  # Lines are parallel
+        return False
+    
+    # Calculate intersection parameters
+    t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / denom
+    u = -((x1 - x2) * (y1 - y3) - (y1 - y2) * (x1 - x3)) / denom
+    
+    # Check if intersection point is within both line segments
+    return 0 <= t <= 1 and 0 <= u <= 1
+
+def split_line_around_windows(x1, y1, x2, y2, bboxes, class_ids):
+    """
+    Split a line segment around windows, returning only the parts that don't cross windows.
+    
+    Args:
+        x1, y1, x2, y2: Line segment endpoints
+        bboxes: All bounding boxes from detection
+        class_ids: Class IDs corresponding to bboxes
+    
+    Returns:
+        List of line segments [(start_point, end_point), ...] that don't cross windows
+    """
+    # Start with the original line segment
+    segments_to_process = [((x1, y1), (x2, y2))]
+    final_segments = []
+    
+    # Get all window bounding boxes with margin
+    window_rects = []
+    for idx, cid in enumerate(class_ids):
+        if cid == 2:  # window
+            wy1, wx1, wy2, wx2 = bboxes[idx]
+            # Add moderate margin around window to balance exclusion vs coverage
+            margin = 5  # Balanced margin - not too aggressive
+            wx1 -= margin
+            wy1 -= margin
+            wx2 += margin
+            wy2 += margin
+            window_rects.append((wx1, wy1, wx2, wy2))
+    
+    # Process each line segment against all windows
+    for seg_start, seg_end in segments_to_process:
+        sx, sy = seg_start
+        ex, ey = seg_end
+        
+        # Check if this segment intersects any window
+        intersects_window = False
+        
+        for wx1, wy1, wx2, wy2 in window_rects:
+            # Check if line crosses window or has significant overlap
+            line_crosses = line_intersects_rectangle(sx, sy, ex, ey, wx1, wy1, wx2, wy2)
+            
+            # Only check endpoint containment if line is very short (likely endpoint issue)
+            segment_length = ((ex - sx) ** 2 + (ey - sy) ** 2) ** 0.5
+            if segment_length < 10:  # Very short segment
+                start_inside = (wx1 <= sx <= wx2 and wy1 <= sy <= wy2)
+                end_inside = (wx1 <= ex <= wx2 and wy1 <= ey <= wy2)
+                if start_inside or end_inside:
+                    line_crosses = True
+            
+            if line_crosses:
+                intersects_window = True
+                # Split the line at the window boundaries
+                split_segments = split_line_at_rectangle(sx, sy, ex, ey, wx1, wy1, wx2, wy2)
+                final_segments.extend(split_segments)
+                break
+        
+        # If no intersection with any window, keep the original segment
+        if not intersects_window:
+            final_segments.append((seg_start, seg_end))
+    
+    return final_segments
+
+def split_line_at_rectangle(x1, y1, x2, y2, rect_x1, rect_y1, rect_x2, rect_y2):
+    """
+    Split a line segment at the boundaries of a rectangle, returning the parts outside the rectangle.
+    
+    Args:
+        x1, y1, x2, y2: Line segment endpoints
+        rect_x1, rect_y1, rect_x2, rect_y2: Rectangle bounds
+    
+    Returns:
+        List of line segments that are outside the rectangle
+    """
+    segments = []
+    
+    # Check if line actually crosses the rectangle
+    line_crosses = line_intersects_rectangle(x1, y1, x2, y2, rect_x1, rect_y1, rect_x2, rect_y2)
+    
+    # Check endpoint containment only for very short segments or if line clearly crosses
+    start_inside = (rect_x1 <= x1 <= rect_x2 and rect_y1 <= y1 <= rect_y2)
+    end_inside = (rect_x1 <= x2 <= rect_x2 and rect_y1 <= y2 <= rect_y2)
+    
+    # If no intersection and endpoints aren't both inside, return original line
+    if not line_crosses and not (start_inside and end_inside):
+        return [((x1, y1), (x2, y2))]
+    
+    # If both endpoints are inside rectangle, don't draw anything
+    if start_inside and end_inside:
+        return []
+    
+    # Find intersection points with rectangle edges
+    intersections = []
+    
+    # Check intersection with each edge and collect intersection points
+    edges = [
+        (rect_x1, rect_y1, rect_x2, rect_y1),  # top edge
+        (rect_x1, rect_y2, rect_x2, rect_y2),  # bottom edge  
+        (rect_x1, rect_y1, rect_x1, rect_y2),  # left edge
+        (rect_x2, rect_y1, rect_x2, rect_y2)   # right edge
+    ]
+    
+    for edge_x1, edge_y1, edge_x2, edge_y2 in edges:
+        intersection = line_intersection_point(x1, y1, x2, y2, edge_x1, edge_y1, edge_x2, edge_y2)
+        if intersection:
+            intersections.append(intersection)
+    
+    # Remove duplicate intersections (within small tolerance)
+    unique_intersections = []
+    for ix, iy in intersections:
+        is_duplicate = False
+        for ux, uy in unique_intersections:
+            if abs(ix - ux) < 1 and abs(iy - uy) < 1:
+                is_duplicate = True
+                break
+        if not is_duplicate:
+            unique_intersections.append((ix, iy))
+    
+    if not unique_intersections:
+        # Line is entirely inside rectangle, don't draw it
+        return []
+    
+    if len(unique_intersections) == 1:
+        # Line starts or ends inside rectangle
+        ix, iy = unique_intersections[0]
+        if rect_x1 <= x1 <= rect_x2 and rect_y1 <= y1 <= rect_y2:
+            # Start point is inside, draw from intersection to end
+            segments.append(((ix, iy), (x2, y2)))
+        else:
+            # End point is inside, draw from start to intersection
+            segments.append(((x1, y1), (ix, iy)))
+    
+    elif len(unique_intersections) >= 2:
+        # Line crosses through rectangle, sort intersections by distance from start
+        intersections_with_dist = []
+        for ix, iy in unique_intersections:
+            dist = ((ix - x1) ** 2 + (iy - y1) ** 2) ** 0.5
+            intersections_with_dist.append((dist, ix, iy))
+        
+        intersections_with_dist.sort()
+        
+        # Take the first two intersections (entry and exit points)
+        if len(intersections_with_dist) >= 2:
+            _, ix1, iy1 = intersections_with_dist[0]
+            _, ix2, iy2 = intersections_with_dist[1]
+            
+            # Draw segment from start to first intersection
+            if not (rect_x1 <= x1 <= rect_x2 and rect_y1 <= y1 <= rect_y2):
+                segments.append(((x1, y1), (ix1, iy1)))
+            
+            # Draw segment from second intersection to end
+            if not (rect_x1 <= x2 <= rect_x2 and rect_y1 <= y2 <= rect_y2):
+                segments.append(((ix2, iy2), (x2, y2)))
+    
+    return segments
+
+def line_intersection_point(x1, y1, x2, y2, x3, y3, x4, y4):
+    """
+    Find the intersection point of two line segments.
+    
+    Returns:
+        (x, y) intersection point if segments intersect, None otherwise
+    """
+    denom = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4)
+    
+    if abs(denom) < 1e-10:  # Lines are parallel
+        return None
+    
+    t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / denom
+    u = -((x1 - x2) * (y1 - y3) - (y1 - y2) * (x1 - x3)) / denom
+    
+    # Check if intersection point is within both line segments
+    if 0 <= t <= 1 and 0 <= u <= 1:
+        ix = x1 + t * (x2 - x1)
+        iy = y1 + t * (y2 - y1)
+        return (ix, iy)
+    
+    return None
 	
 
 # Load model on startup (Flask 2.x compatible way)
@@ -1356,16 +1590,55 @@ def find_junctions_from_bboxes(wall_bboxes):
 	return filtered_junctions
 
 def keep_largest_component(binary_img):
-    """Keep only the largest connected component in a binary image."""
-    labeled = label(binary_img)
-    if labeled.max() == 0:
-        return binary_img  # nothing to keep
-    largest_cc = numpy.equal(labeled, numpy.argmax(numpy.bincount(labeled.flat)[1:]) + 1).astype(bool)
-    return largest_cc
+    """Keep only the largest connected component"""
+    from skimage.measure import label
+    labeled_img = label(binary_img)
+    if labeled_img.max() == 0:
+        return binary_img
+    
+    # Find the largest component
+    component_sizes = numpy.bincount(labeled_img.flatten())
+    component_sizes[0] = 0  # Ignore background
+    largest_component = numpy.argmax(component_sizes)
+    
+    # Keep only the largest component
+    return labeled_img == largest_component
+
+def improve_mask_for_skeletonization(wall_mask):
+    """Improve wall mask quality for better skeletonization of angled walls."""
+    from skimage.morphology import binary_closing, binary_opening, disk
+    
+    # Apply morphological operations to smooth the wall mask
+    # This helps with angled walls by filling small gaps and smoothing edges
+    structuring_element = disk(2)  # Small disk for gentle smoothing
+    
+    # Fill small gaps
+    improved_mask = binary_closing(wall_mask, structuring_element)
+    
+    # Remove small protrusions
+    improved_mask = binary_opening(improved_mask, disk(1))
+    
+    # Ensure the mask is still roughly the same size
+    if numpy.sum(improved_mask) < 0.8 * numpy.sum(wall_mask):
+        # If we lost too much, use the original mask
+        return wall_mask
+    
+    return improved_mask
+
+def clean_skeleton(skeleton):
+    """Clean up skeleton to remove small artifacts and improve centerline quality."""
+    from skimage.morphology import remove_small_objects
+    from skimage.measure import label
+    
+    # Remove very small skeleton components that are likely artifacts
+    labeled_skeleton = label(skeleton)
+    cleaned_skeleton = remove_small_objects(labeled_skeleton, min_size=3) > 0
+    
+    return cleaned_skeleton.astype(bool)
 
 def segment_individual_walls(wall_mask):
     """Segment connected wall regions into individual wall segments with robust per-region processing."""
-    from skimage.morphology import remove_small_objects, skeletonize
+    from skimage.morphology import remove_small_objects, skeletonize, binary_closing, binary_opening, disk
     from skimage.measure import label, regionprops
     import numpy as np
     
@@ -1380,8 +1653,13 @@ def segment_individual_walls(wall_mask):
         if numpy.sum(region_mask) < 20:
             continue
             
-        skeleton = skeletonize(region_mask)
+        # Improve skeleton quality for angled walls
+        improved_mask = improve_mask_for_skeletonization(region_mask)
+        skeleton = skeletonize(improved_mask)
         skeleton = safe_logical_and(skeleton.astype(bool), region_mask.astype(bool))  # FIXED: explicit bool casting
+        
+        # Clean up skeleton to remove small artifacts
+        skeleton = clean_skeleton(skeleton)
         
         junctions = find_junction_points_simple(skeleton)
         all_junctions.extend(junctions)
@@ -1451,66 +1729,117 @@ def extract_centerline_coords(segment_coords):
 	ordered = order_centerline_points_connectivity(segment_coords)
 	return ordered if ordered else segment_coords.tolist()
 
+
+
+def extract_centerline_coords_with_validation(segment_coords, wall_mask, min_length=2):
+    """Extract ordered centerline coordinates with improved curve preservation for angled walls."""
+    if len(segment_coords) < 2:
+        return []
+    
+    # First, order the skeleton points properly
+    ordered_centerline = order_centerline_points_connectivity(segment_coords)
+    if len(ordered_centerline) < min_length:
+        return []
+    
+    # For angled walls, we need to preserve the skeleton curve better
+    # Instead of drawing lines between points, we validate each skeleton point individually
+    validated_coords = []
+    
+    for point in ordered_centerline:
+        x, y = point
+        # Check if point is within image bounds and in wall area
+        if (0 <= y < wall_mask.shape[0] and 0 <= x < wall_mask.shape[1] and 
+            bool(wall_mask[y, x])):
+            validated_coords.append(point)
+        else:
+            # Try to find a nearby valid point
+            nearest = find_nearest_valid_point(x, y, wall_mask, max_search_radius=3)
+            if nearest is not None:
+                validated_coords.append([nearest[1], nearest[0]])  # Convert back to [x, y]
+    
+    # Apply smoothing to reduce noise while preserving the curve
+    if len(validated_coords) > 4:
+        validated_coords = smooth_centerline_curve(validated_coords)
+    
+    return validated_coords if len(validated_coords) >= min_length else []
+
+def smooth_centerline_curve(centerline_coords, window_size=3):
+    """Apply smoothing to centerline coordinates to reduce noise while preserving curve shape."""
+    if len(centerline_coords) < window_size:
+        return centerline_coords
+    
+    smoothed_coords = []
+    half_window = window_size // 2
+    
+    for i in range(len(centerline_coords)):
+        # For points near the edges, use smaller windows
+        start_idx = max(0, i - half_window)
+        end_idx = min(len(centerline_coords), i + half_window + 1)
+        
+        # Calculate average position within the window
+        x_sum = sum(point[0] for point in centerline_coords[start_idx:end_idx])
+        y_sum = sum(point[1] for point in centerline_coords[start_idx:end_idx])
+        count = end_idx - start_idx
+        
+        smoothed_x = x_sum / count
+        smoothed_y = y_sum / count
+        
+        smoothed_coords.append([smoothed_x, smoothed_y])
+    
+    return smoothed_coords
+
 def order_centerline_points_connectivity(segment_coords):
-    """Order centerline points following skeleton connectivity (8-neighbour) to avoid diagonal shortcuts."""
+    """Improved ordering that better handles angled walls and curved segments."""
     # Convert to set of (x, y) tuples for fast lookup
     coords_set = set((int(c[1]), int(c[0])) for c in segment_coords)
     if not coords_set:
         return []
+    
     # 8-neighbour offsets
     nbrs = [(-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (1, 1), (-1, 1), (1, -1)]
+    
     # Compute degree of each pixel
     degrees = {p: sum(((p[0]+dx, p[1]+dy) in coords_set) for dx, dy in nbrs) for p in coords_set}
-    # Endpoints have degree 1. If none, pick arbitrary start (loop)
+    
+    # Find endpoints (degree 1) - these are the natural start/end points
     endpoints = [p for p, d in degrees.items() if d == 1]
-    start = endpoints[0] if endpoints else next(iter(coords_set))
+    
+    # If we have endpoints, start from one of them
+    if endpoints:
+        start = endpoints[0]
+    else:
+        # If no clear endpoints (closed loop), find a point with minimum degree
+        min_degree = min(degrees.values())
+        start = next(p for p, d in degrees.items() if d == min_degree)
+    
+    # Traverse the skeleton following connectivity
     ordered = [start]
     visited = {start}
     current = start
+    
     while True:
+        # Find next unvisited neighbor
         next_pixel = None
+        min_degree_neighbor = float('inf')
+        
+        # Prefer neighbors with lower degree to follow the main path
         for dx, dy in nbrs:
             cand = (current[0]+dx, current[1]+dy)
             if cand in coords_set and cand not in visited:
-                next_pixel = cand
-                break
+                cand_degree = degrees[cand]
+                if cand_degree < min_degree_neighbor:
+                    min_degree_neighbor = cand_degree
+                    next_pixel = cand
+        
         if next_pixel is None:
             break
+            
         ordered.append(next_pixel)
         visited.add(next_pixel)
         current = next_pixel
-    # Return as [x, y] lists
+    
+    # Convert back to [x, y] format
     return [[p[0], p[1]] for p in ordered]
-
-def extract_centerline_coords_with_validation(segment_coords, wall_mask, min_length=2):
-    """Extract ordered centerline coordinates with connectivity ordering and robust in-mask validation, splitting into subpaths."""
-    if len(segment_coords) < 2:
-        return []
-    ordered_centerline = order_centerline_points_connectivity(segment_coords)
-    if len(ordered_centerline) < min_length:
-        return []
-    valid_paths = []
-    current_path = []
-    for i in range(1, len(ordered_centerline)):
-        p1 = ordered_centerline[i-1]
-        p2 = ordered_centerline[i]
-        rr, cc = skimage_line(p1[1], p1[0], p2[1], p2[0])
-        # FIXED: simplified boolean array comparison
-        points_valid = [(0 <= y < wall_mask.shape[0] and 0 <= x < wall_mask.shape[1] and wall_mask[y, x]) for y, x in zip(rr, cc)]
-        if numpy.all(points_valid):
-            if not current_path:
-                current_path.append(p1)
-            current_path.append(p2)
-        else:
-            if len(current_path) >= min_length:
-                valid_paths.append(current_path)
-            current_path = []
-    if len(current_path) >= min_length:
-        valid_paths.append(current_path)
-    if not valid_paths:
-        return []
-    # Return the longest valid path
-    return max(valid_paths, key=len)
 
 def calculate_wall_thickness(wall_mask, centerline_coords):
 	"""Calculate wall thickness along the centerline"""
@@ -1775,6 +2104,22 @@ def analyze_wall_parameters():
 			# enlarge buffer further to ensure no wall pixels remain near doors
 			dilated_dm = cv2.dilate(dilated_dm.astype(numpy.uint8), numpy.ones((35,35), numpy.uint8), iterations=1).astype(bool)
 			combined_door_mask = safe_logical_or(combined_door_mask.astype(bool), dilated_dm.astype(bool))
+
+		# Extract window masks and build combined window mask
+		window_masks = []
+		if 'masks' in r:
+			for idx, cid in enumerate(r['class_ids']):
+				if cid == 2 and idx < r['masks'].shape[2]:  # window class
+					window_masks.append(r['masks'][:, :, idx])
+		
+		# Build a combined window mask
+		combined_window_mask = numpy.zeros((h, w), dtype=bool)
+		for wm in window_masks:
+			# Dilate window mask to cover regions near window edges, preventing centerline crossing
+			dilated_wm = cv2.dilate(wm.astype(numpy.uint8), numpy.ones((10,10), numpy.uint8), iterations=1).astype(bool)
+			# enlarge buffer to ensure no wall pixels remain near windows
+			dilated_wm = cv2.dilate(dilated_wm.astype(numpy.uint8), numpy.ones((20,20), numpy.uint8), iterations=1).astype(bool)
+			combined_window_mask = safe_logical_or(combined_window_mask.astype(bool), dilated_wm.astype(bool))
 		
 		if not wall_masks:
 			return jsonify({
@@ -1792,8 +2137,9 @@ def analyze_wall_parameters():
 		combined_wall_mask = numpy.zeros((h, w), dtype=bool)
 		
 		for i, wall_mask in enumerate(wall_masks):
-			# Remove door areas from wall mask to avoid centerlines through openings
+			# Remove door and window areas from wall mask to avoid centerlines through openings
 			wall_mask = safe_logical_and(wall_mask, safe_logical_not(combined_door_mask))
+			wall_mask = safe_logical_and(wall_mask, safe_logical_not(combined_window_mask))
 			combined_wall_mask = safe_logical_or(combined_wall_mask.astype(bool), wall_mask.astype(bool))
 			
 			# Segment individual walls from this mask
@@ -1807,8 +2153,9 @@ def analyze_wall_parameters():
 			for junction in junctions:
 				all_junctions.append(junction)
 		
-		# Ensure combined_wall_mask does not include doors
+		# Ensure combined_wall_mask does not include doors or windows
 		combined_wall_mask = safe_logical_and(combined_wall_mask.astype(bool), numpy.logical_not(combined_door_mask.astype(bool)))  # Fixed boolean operation
+		combined_wall_mask = safe_logical_and(combined_wall_mask.astype(bool), numpy.logical_not(combined_window_mask.astype(bool)))
 
 		print(f"Segmented into {len(all_wall_segments)} individual walls with {len(all_junctions)} junctions")
 		
@@ -2029,9 +2376,33 @@ def visualize_wall_analysis():
 				temp_mask[y1e:y2e+1, x1e:x2e+1] = True
 				combined_door_mask = safe_logical_or(combined_door_mask, temp_mask)
 
-		
-		# Remove door areas from combined wall mask
+		# Build combined window mask (dilated window masks + expanded bounding boxes)
+		combined_window_mask = numpy.zeros((h, w), dtype=bool)
+		for idx, cid in enumerate(r['class_ids']):
+			if cid == 2:  # window class
+				# Ensure bbox coordinates are ints for slicing
+				bbox = r['rois'][idx]
+				y1, x1, y2, x2 = [int(round(v)) for v in bbox]
+				# Add mask if available
+				if 'masks' in r and idx < r['masks'].shape[2]:
+					wm = r['masks'][:, :, idx]
+					dilated_wm = cv2.dilate(wm.astype(numpy.uint8), numpy.ones((10,10), numpy.uint8), iterations=1).astype(bool)
+					# enlarge buffer to ensure no wall pixels remain near windows
+					dilated_wm = cv2.dilate(dilated_wm.astype(numpy.uint8), numpy.ones((20,20), numpy.uint8), iterations=1).astype(bool)
+					combined_window_mask = safe_logical_or(combined_window_mask.astype(bool), dilated_wm.astype(bool))
+				# Add expanded bounding box area (with margin)
+				margin = 25
+				x1e = max(0, x1 - margin)
+				y1e = max(0, y1 - margin)
+				x2e = min(w-1, x2 + margin)
+				y2e = min(h-1, y2 + margin)
+				temp_mask = numpy.zeros_like(combined_window_mask)
+				temp_mask[y1e:y2e+1, x1e:x2e+1] = True
+				combined_window_mask = safe_logical_or(combined_window_mask, temp_mask)
+
+		# Remove door and window areas from combined wall mask
 		combined_wall_mask = safe_logical_and(combined_wall_mask.astype(bool), numpy.logical_not(combined_door_mask.astype(bool)))
+		combined_wall_mask = safe_logical_and(combined_wall_mask.astype(bool), numpy.logical_not(combined_window_mask.astype(bool)))
 		print("Combined wall mask ready; starting skeletonisation & segment extraction …")
 		wall_segments, junctions = segment_individual_walls(combined_wall_mask)
 		print(f"Found {len(wall_segments)} wall segments and {len(junctions)} raw junctions")
@@ -2462,7 +2833,7 @@ def create_wall_visualization(original_image, model_results, wall_parameters, ju
 		# Draw text
 		draw.text((text_x, text_y), label, fill=(255, 255, 255), font=font)
 	
-	# Draw wall centerlines
+	# Draw wall centerlines and track which walls already have centerlines
 	# Pre-compute door bounding boxes once (x1,y1,x2,y2)
 	door_boxes_xy = []
 	for idx, cid in enumerate(class_ids):
@@ -2476,6 +2847,9 @@ def create_wall_visualization(original_image, model_results, wall_parameters, ju
 	exterior_wall_ids = set()
 	if exterior_walls:
 		exterior_wall_ids = {wall["wall_id"] for wall in exterior_walls}
+
+	# Track which wall bounding boxes already have centerlines drawn
+	walls_with_centerlines = set()
 
 	for wall in wall_parameters:
 		# Skip if wall bbox overlaps any door heavily (>35% of wall bbox area)
@@ -2542,6 +2916,14 @@ def create_wall_visualization(original_image, model_results, wall_parameters, ju
 					continue
 				
 				draw.line([p1, p2], fill=wall_color, width=wall_width)
+			
+			# Mark this wall region as having a centerline to avoid duplicates in fallback
+			# Convert millimeter coordinates back to pixels for comparison
+			x1w_px = mm_to_pixels(x1w, scale_factor_mm_per_pixel)
+			y1w_px = mm_to_pixels(y1w, scale_factor_mm_per_pixel)
+			x2w_px = mm_to_pixels(x2w, scale_factor_mm_per_pixel)
+			y2w_px = mm_to_pixels(y2w, scale_factor_mm_per_pixel)
+			walls_with_centerlines.add((int(x1w_px), int(y1w_px), int(x2w_px), int(y2w_px)))
 		# Wall ID drawing is temporarily disabled as per user request
 	
 	# Draw junctions
@@ -2605,108 +2987,125 @@ def create_wall_visualization(original_image, model_results, wall_parameters, ju
 		# Draw text
 		draw.text((25, y_pos-1), text, fill=(0, 0, 0), font=legend_font)
 	
-	# After drawing centerlines (existing loop) add fallback for missing ones
-	# Draw junctions
+	# Improved fallback centerlines only for walls that don't already have centerlines
 	for i in range(len(bboxes)):
 		if class_ids[i] != 1:
 			continue
-		# Compute simple horizontal/vertical centerline within bbox
+		
 		y1, x1, y2, x2 = bboxes[i]
+		
+		# Check if this wall already has a centerline drawn
+		wall_bbox = (int(x1), int(y1), int(x2), int(y2))
+		wall_already_has_centerline = False
+		
+		# Check if this bbox overlaps significantly with any wall that already has a centerline
+		for (wx1, wy1, wx2, wy2) in walls_with_centerlines:
+			# Calculate overlap
+			overlap_x1 = max(x1, wx1)
+			overlap_y1 = max(y1, wy1)
+			overlap_x2 = min(x2, wx2)
+			overlap_y2 = min(y2, wy2)
+			
+			if overlap_x1 < overlap_x2 and overlap_y1 < overlap_y2:
+				overlap_area = (overlap_x2 - overlap_x1) * (overlap_y2 - overlap_y1)
+				bbox_area = (x2 - x1) * (y2 - y1)
+				if overlap_area / bbox_area > 0.5:  # 50% overlap threshold
+					wall_already_has_centerline = True
+					break
+		
+		if wall_already_has_centerline:
+			continue  # Skip this wall since it already has a centerline
+		
 		width_box = x2 - x1
 		height_box = y2 - y1
 		if width_box < 3 or height_box < 3:
 			continue  # skip extremely small boxes
-		# Decide orientation: longer dimension defines line direction
-		if width_box >= height_box:
-			cy = (y1 + y2) // 2
-			p_start = (x1, cy)
-			p_end = (x2, cy)
-		else:
-			cx = (x1 + x2) // 2
-			p_start = (cx, y1)
-			p_end = (cx, y2)
-		draw.line([p_start, p_end], fill=centerline_color, width=4)
+		
+		# Get the wall mask for this bounding box if available
+		wall_mask = None
+		if masks is not None and i < masks.shape[2]:
+			wall_mask = masks[:, :, i]
+		
+		centerline_drawn = False
+		
+		# If we have a mask, try to compute a better centerline
+		if wall_mask is not None:
+			try:
+				# Extract skeleton-based centerline for this wall
+				from skimage.morphology import skeletonize
+				skeleton = skeletonize(wall_mask)
+				skeleton_coords = numpy.where(skeleton)
+				
+				if len(skeleton_coords[0]) > 1:
+					# Convert to (y, x) coordinates
+					skeleton_points = list(zip(skeleton_coords[0], skeleton_coords[1]))
+					# Order the points using our improved algorithm
+					ordered_points = order_centerline_points_connectivity(skeleton_points)
+					
+					if len(ordered_points) > 1:
+						# Draw the skeleton-based centerline
+						valid_segments = []
+						for j in range(1, len(ordered_points)):
+							p1 = (ordered_points[j-1][0], ordered_points[j-1][1])  # (x, y)
+							p2 = (ordered_points[j][0], ordered_points[j][1])    # (x, y)
+							
+							# Skip drawing lines in legend area
+							legend_area_x = 40
+							legend_area_y = 140
+							if ((p1[0] < legend_area_x and p1[1] < legend_area_y) or 
+								(p2[0] < legend_area_x and p2[1] < legend_area_y)):
+								continue
+							
+							# Split centerline segment around windows instead of excluding entirely
+							segments_to_draw = split_line_around_windows(p1[0], p1[1], p2[0], p2[1], bboxes, class_ids)
+							valid_segments.extend(segments_to_draw)
+						
+						# Draw only the valid segments that don't cross windows
+						for seg_data in valid_segments:
+							if len(seg_data) == 2:  # It's a pair of points
+								p1, p2 = seg_data
+								draw.line([p1, p2], fill=centerline_color, width=4)
+						
+						if valid_segments:  # Only mark as drawn if we actually drew something
+							centerline_drawn = True
+							walls_with_centerlines.add(wall_bbox)  # Mark as having centerline
+			except:
+				# If skeleton extraction fails, fall back to simple line
+				pass
+		
+		# Simple fallback for when mask is not available or skeleton fails
+		if not centerline_drawn:
+			if width_box >= height_box:
+				cy = (y1 + y2) // 2
+				p_start = (x1, cy)
+				p_end = (x2, cy)
+			else:
+				cx = (x1 + x2) // 2
+				p_start = (cx, y1)
+				p_end = (cx, y2)
+			
+			# Skip drawing lines in legend area
+			legend_area_x = 40
+			legend_area_y = 140
+			if ((p_start[0] < legend_area_x and p_start[1] < legend_area_y) or 
+				(p_end[0] < legend_area_x and p_end[1] < legend_area_y)):
+				continue
+			
+			# Split centerline around windows instead of excluding entirely
+			segments_to_draw = split_line_around_windows(p_start[0], p_start[1], p_end[0], p_end[1], bboxes, class_ids)
+			
+			if segments_to_draw:  # If we have any valid segments to draw
+				for seg_start, seg_end in segments_to_draw:
+					draw.line([seg_start, seg_end], fill=centerline_color, width=4)
+				walls_with_centerlines.add(wall_bbox)  # Mark as having centerline
 	
 	# ----------------------
-	# Fallback centerlines (only if skeleton-based centerline missing)
-	# Improved: split lines at door openings so they never cover doors.
+	# Final fallback centerlines (only for walls without any centerlines)
+	# This section is now disabled since the improved fallback above handles everything
 	# ----------------------
-
-	# Pre-compute door bounding boxes with small margin
-	door_boxes = []
-	for idx, cid in enumerate(class_ids):
-		if cid == 3:  # door
-			dy1, dx1, dy2, dx2 = bboxes[idx]
-			margin = 25
-			# Ensure all coordinates are scalars
-			dx1, dy1, dx2, dy2 = float(dx1), float(dy1), float(dx2), float(dy2)
-			door_boxes.append((dx1 - margin, dy1 - margin, dx2 + margin, dy2 + margin))
-
-	for i in range(len(bboxes)):
-		if class_ids[i] != 1:
-			continue  # process only walls
-
-		y1, x1, y2, x2 = bboxes[i]
-		# Ensure all coordinates are scalars
-		y1, x1, y2, x2 = float(y1), float(x1), float(y2), float(x2)
-		width_box = x2 - x1
-		height_box = y2 - y1
-		if width_box < 3 or height_box < 3:
-			continue  # ignore tiny walls
-
-		if width_box >= height_box:  # horizontal wall
-			cy = (y1 + y2) // 2
-			segments = [(x1, x2)]
-			# cut segments around door overlaps
-			for (dx1, dy1, dx2, dy2) in door_boxes:
-				if dy1 <= cy <= dy2:  # vertical overlap
-					updated = []
-					for sx, ex in segments:
-						# no overlap
-						if ex < dx1 or sx > dx2:
-							updated.append((sx, ex))
-						else:
-							# segment before door
-							if sx < dx1 - 1:
-								updated.append((sx, dx1 - 1))
-							# segment after door
-							if ex > dx2 + 1:
-								updated.append((dx2 + 1, ex))
-					segments = updated
-			# draw remaining segments
-			for sx, ex in segments:
-				if ex - sx > 2:
-					# Skip drawing lines in legend area (top-left 40x140 pixel box)
-					legend_area_x = 40
-					legend_area_y = 140  # legend_y (10) + 8 items * 15 pixels
-					if ((sx < legend_area_x and cy < legend_area_y) or 
-						(ex < legend_area_x and cy < legend_area_y)):
-						continue
-					draw.line([(sx, cy), (ex, cy)], fill=centerline_color, width=4)
-		else:  # vertical wall
-			cx = (x1 + x2) // 2
-			segments = [(y1, y2)]
-			for (dx1, dy1, dx2, dy2) in door_boxes:
-				if dx1 <= cx <= dx2:  # horizontal overlap
-					updated = []
-					for sy, ey in segments:
-						if ey < dy1 or sy > dy2:
-							updated.append((sy, ey))
-						else:
-							if sy < dy1 - 1:
-								updated.append((sy, dy1 - 1))
-							if ey > dy2 + 1:
-								updated.append((dy2 + 1, ey))
-					segments = updated
-			for sy, ey in segments:
-				if ey - sy > 2:
-					# Skip drawing lines in legend area (top-left 40x140 pixel box)
-					legend_area_x = 40
-					legend_area_y = 140  # legend_y (10) + 8 items * 15 pixels
-					if ((cx < legend_area_x and sy < legend_area_y) or 
-						(cx < legend_area_x and ey < legend_area_y)):
-						continue
-					draw.line([(cx, sy), (cx, ey)], fill=centerline_color, width=4)
+	
+	# This section is commented out to avoid duplicate centerlines
+	# The improved fallback above now handles both skeleton-based and simple fallback centerlines
 
 	# Draw OCR-detected space names
 	if space_names:
