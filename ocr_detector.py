@@ -106,76 +106,212 @@ class SpaceVocabulary:
         'hr', 'admin', 'acct', 'fin', 'ops', 'dev', 'qa', 'rd'
     ]
     
-    # Korean residential spaces
+    # Korean residential spaces - Comprehensive list
     KOREAN_RESIDENTIAL = [
-        # Basic rooms
-        '방', '침실', '안방', '작은방', '큰방', '거실', '응접실', '부엌', '주방',
-        '화장실', '욕실', '변소', '세면실', '샤워실', '목욕탕',
+        # Basic rooms and variations
+        '방', '침실', '안방', '작은방', '큰방', '주침실', '부침실', '자녀방', '아이방',
+        '신혼방', '부부방', '게스트룸', '손님방', '객실', '별실', '다다미방',
         
-        # Specialized residential spaces
-        '현관', '입구', '현관문', '현관홀', '복도', '계단', '층계',
-        '다용도실', '세탁실', '보일러실', '창고', '저장실', '수납공간',
-        '드레스룸', '옷장', '붙박이장', '팬트리', '다락방', '지하실',
-        '베란다', '발코니', '테라스', '마당', '정원', '차고', '주차장',
+        # Living spaces
+        '거실', '응접실', '응접간', '리빙룸', '패밀리룸', '가족실', '홀', '대청마루',
+        '마루', '온돌방', '큰방', '작은방', '건넌방', '안채', '사랑채',
         
-        # Study and work spaces
-        '서재', '공부방', '사무실', '작업실', '취미실', '놀이방',
-        '운동실', '헬스장', '사우나', '찜질방',
+        # Kitchen and dining
+        '부엌', '주방', '조리실', '주방실', '간이주방', '미니주방', '키친', '키친룸',
+        '식당', '다이닝룸', '다이닝', '식사공간', '아침식사공간', '조식공간',
+        '찬방', '찬간', '식품보관실', '팬트리', '식료품실',
         
-        # Dining and kitchen variations
-        '식당', '다이닝', '아침식사공간', '간이주방', '팬트리',
+        # Bathrooms and hygiene
+        '화장실', '욕실', '변소', '세면실', '샤워실', '목욕탕', '목욕실',
+        '반욕실', '파우더룸', '화장대', '세면대', '양변기', '비데',
+        '사우나', '찜질방', '스팀룸', '온천욕실', '자쿠지룸',
         
-        # Bathroom variations
-        '화장실', '욕실', '샤워실', '세면실', '파우더룸', '반욕실'
-    ]
-    
-    # Korean office/commercial spaces
-    KOREAN_OFFICE = [
-        # Executive offices
-        '사무실', '개인사무실', '임원실', '대표실', '사장실', '부장실',
-        '과장실', '팀장실', '실장실', '본부장실', '이사실',
-        
-        # Meeting spaces
-        '회의실', '대회의실', '소회의실', '이사회실', '세미나실',
-        '교육실', '강의실', '프레젠테이션룸', '화상회의실',
-        '미팅룸', '협업공간', '토론실', '브레인스토밍룸',
-        
-        # Work areas
-        '사무공간', '업무공간', '개방형사무실', '칸막이사무실',
-        '워크스테이션', '데스크', '좌석', '팀공간', '프로젝트룸',
-        
-        # Reception and entrance
-        '접수처', '리셉션', '로비', '현관', '입구', '대기실',
-        '안내데스크', '프론트데스크', '보안데스크', '경비실',
-        
-        # Break and dining areas
-        '휴게실', '라운지', '카페테리아', '구내식당', '급식실',
-        '커피바', '다과실', '주방', '간이주방', '팬트리',
-        '식당', '식사공간', '직원식당',
+        # Entrance and circulation
+        '현관', '입구', '현관문', '현관홀', '현관실', '신발장', '신발보관실',
+        '복도', '계단', '층계', '계단실', '엘리베이터', '승강기', '홀웨이',
+        '통로', '연결통로', '내부통로', '외부통로',
         
         # Storage and utility
-        '창고', '보관실', '자료실', '서류보관실', '아카이브',
-        '우편실', '복사실', '인쇄실', '서버실', '전산실',
-        '통신실', '전기실', '기계실', '보일러실', '청소용품실',
-        '관리실', '시설관리실', '라커룸', '탈의실',
+        '창고', '저장실', '수납공간', '수납실', '보관실', '물품보관실',
+        '다용도실', '세탁실', '빨래방', '세탁공간', '건조실', '다림질실',
+        '보일러실', '기계실', '전기실', '설비실', '유틸리티룸',
+        '청소용품실', '청소도구실', '걸레보관실',
         
-        # Specialized spaces
-        '연구실', '실험실', '개발실', '디자인실', '스튜디오',
-        '작업실', '제작실', '품질관리실', '검사실', '테스트룸',
-        '방송실', '녹음실', '편집실', '제어실', '모니터링실',
+        # Closets and dressing
+        '옷장', '붙박이장', '드레스룸', '드레싱룸', '탈의실', '옷방',
+        '리넨룸', '이불장', '침구보관실', '계절용품실', '겨울용품실',
+        '여름용품실', '의류보관실', '코트룸',
         
-        # Health and facilities
-        '의무실', '보건실', '상담실', '휴식실', '수유실',
-        '기도실', '명상실', '헬스장', '운동실', '샤워실',
+        # Outdoor and extension spaces
+        '베란다', '발코니', '테라스', '마당', '정원', '앞마당', '뒷마당',
+        '옥상', '루프탑', '옥상정원', '테라스정원', '썬룸', '선룸',
+        '온실', '유리방', '햇빛방', '일광욕실',
         
-        # Bathrooms
-        '화장실', '남자화장실', '여자화장실', '장애인화장실',
-        '공용화장실', '직원화장실', '세면실',
+        # Garage and parking
+        '차고', '주차장', '지하주차장', '실내주차장', '자동차보관소',
+        '오토바이보관소', '자전거보관소', '창고겸차고',
         
-        # Departments and functions
-        '인사부', '총무부', '회계부', '재무부', '영업부',
-        '마케팅부', '기획부', '개발부', '연구개발부', '품질보증부',
-        '고객서비스부', '기술지원부', '교육부', '법무부'
+        # Study and work spaces
+        '서재', '공부방', '독서실', '도서실', '서실', '문고',
+        '사무실', '홈오피스', '재택근무실', '컴퓨터실', 'PC방',
+        '작업실', '작업공간', '아틀리에', '스튜디오', '창작실',
+        
+        # Entertainment and hobbies
+        '취미실', '놀이방', '게임룸', '오락실', '당구장', '탁구장',
+        '피아노실', '음악실', '연습실', '악기실', '노래방',
+        '영화감상실', '홈시어터', '미디어룸', 'TV룸',
+        
+        # Exercise and wellness
+        '운동실', '헬스장', '홈짐', '요가실', '필라테스실', '트레이닝룸',
+        '운동기구실', '러닝머신실', '웨이트룸', '스트레칭룸',
+        
+        # Special purpose rooms
+        '다락방', '다락', '지하실', '지하방', '반지하', '지하공간',
+        '펜트하우스', '루프탑룸', '전망대', '조망실',
+        '안전실', '대피실', '비상실', '방공호', '지하벙커',
+        
+        # Traditional Korean spaces
+        '한옥방', '온돌방', '마루방', '대청', '누마루', '툇마루',
+        '사랑방', '안방', '건넌방', '골방', '부엌간', '찬간',
+        '행랑방', '사랑채', '안채', '별채', '문간방',
+        
+        # Modern apartment terms
+        '아파트', '빌라', '원룸', '투룸', '쓰리룸', '포룸',
+        '복층', '메이저룸', '알파룸', '베타룸', '펜트룸',
+        
+        # Room descriptors
+        '큰방', '작은방', '넓은방', '좁은방', '밝은방', '어두운방',
+        '따뜻한방', '시원한방', '조용한방', '시끄러운방', '전망좋은방',
+        '남향방', '북향방', '동향방', '서향방', '모서리방', '가운데방'
+    ]
+    
+    # Korean office/commercial spaces - Comprehensive list
+    KOREAN_OFFICE = [
+        # Executive offices and management
+        '사무실', '개인사무실', '전용사무실', '독립사무실', '개별사무실',
+        '임원실', '대표실', '사장실', '회장실', '부회장실', '부사장실',
+        '전무실', '상무실', '이사실', '감사실', '고문실', '자문실',
+        '부장실', '차장실', '과장실', '팀장실', '실장실', '본부장실',
+        '센터장실', '지점장실', '영업소장실', '지사장실', '관리소장실',
+        '코너오피스', '모서리사무실', '창가사무실', '내부사무실',
+        
+        # Meeting and conference spaces
+        '회의실', '대회의실', '소회의실', '중회의실', '원형회의실',
+        '이사회실', '임원회의실', '주주총회실', '이사회의실',
+        '세미나실', '세미나룸', '교육실', '강의실', '연수실', '훈련실',
+        '프레젠테이션룸', '발표실', '시연실', '데모룸', '전시실',
+        '화상회의실', '원격회의실', '웹회의실', '온라인회의실',
+        '미팅룸', '미팅스페이스', '토론실', '협의실', '상담실',
+        '브레인스토밍룸', '아이디어룸', '창의실', '기획회의실',
+        '고객상담실', '클라이언트룸', '접견실', '면담실',
+        
+        # Work areas and spaces
+        '사무공간', '업무공간', '워크스페이스', '오피스공간',
+        '개방형사무실', '오픈오피스', '열린사무실', '공용사무실',
+        '칸막이사무실', '파티션사무실', '구획사무실', '분할사무실',
+        '큐비클', '워크스테이션', '개인워크스테이션', '팀워크스테이션',
+        '데스크', '업무데스크', '개인데스크', '공용데스크', '핫데스크',
+        '좌석', '업무좌석', '지정좌석', '자유좌석', '순환좌석',
+        '팀공간', '팀룸', '프로젝트룸', '태스크포스룸', '전담팀실',
+        '협업공간', '콜라보레이션룸', '공동작업실', '그룹스터디룸',
+        '집중업무실', '조용한방', '사일런트룸', '개인집중실',
+        
+        # Reception and entrance areas
+        '접수처', '리셉션', '접수데스크', '안내데스크', '프론트데스크',
+        '로비', '현관', '입구', '메인로비', '1층로비', '엘리베이터홀',
+        '대기실', '웨이팅룸', '고객대기실', '방문자대기실',
+        '안내실', '인포메이션', '종합안내소', '고객센터',
+        '보안데스크', '경비실', '수위실', '관리사무소', '시설관리실',
+        '출입통제실', '방문자등록소', '게스트체크인',
+        
+        # Break and dining areas
+        '휴게실', '휴식실', '라운지', '임직원라운지', '직원휴게실',
+        '카페테리아', '구내식당', '직원식당', '사원식당', '급식실',
+        '식당', '식사공간', '다이닝룸', '다이닝스페이스',
+        '커피바', '카페', '스낵바', '음료대', '자판기코너',
+        '다과실', '티룸', '차실', '커피룸', '음료준비실',
+        '주방', '간이주방', '키친', '키친룸', '조리실',
+        '팬트리', '식품보관실', '냉장고실', '식료품실',
+        '흡연실', '흡연구역', '금연구역', '야외흡연실',
+        
+        # Storage and utility spaces
+        '창고', '보관실', '저장실', '물품보관실', '용품보관실',
+        '자료실', '서류보관실', '문서보관실', '아카이브', '기록보관소',
+        '파일링룸', '파일보관실', '서류정리실', '문서관리실',
+        '우편실', '우편물분류실', '택배보관실', '물류실',
+        '복사실', '인쇄실', '출력실', '프린터룸', '복합기실',
+        '팩스실', '스캔실', '문서작업실', '제본실', '라미네이팅실',
+        '서버실', '전산실', '컴퓨터실', 'IT실', '네트워크실',
+        '통신실', '전화교환실', '통신장비실', '라우터실',
+        '전기실', '전력실', '배전실', '분전반실', '전기설비실',
+        '기계실', '설비실', '공조실', '냉난방실', '보일러실',
+        '청소용품실', '청소도구실', '관리용품실', '소모품실',
+        '라커룸', '사물함실', '개인사물함', '직원사물함',
+        '탈의실', '옷장', '코트룸', '우산보관소',
+        
+        # Specialized work spaces
+        '연구실', '연구개발실', 'R&D실', '기술연구소', '연구센터',
+        '실험실', '테스트실', '검사실', '시험실', '분석실',
+        '개발실', '소프트웨어개발실', '하드웨어개발실', '제품개발실',
+        '디자인실', '디자인스튜디오', '창작실', '아트룸',
+        '스튜디오', '작업실', '제작실', '생산실', '공작실',
+        '품질관리실', '품질보증실', 'QA실', 'QC실', '검품실',
+        '방송실', '녹음실', '녹화실', '편집실', '후반작업실',
+        '제어실', '컨트롤룸', '모니터링실', '관제실', '감시실',
+        '보안실', '경비실', '감시카메라실', 'CCTV실',
+        
+        # Training and education
+        '교육실', '연수실', '훈련실', '실습실', '체험실',
+        '강의실', '강당', '대강당', '소강당', '세미나홀',
+        '컨퍼런스홀', '이벤트홀', '다목적홀', '행사장',
+        '도서실', '자료실', '정보실', '학습실', '독서실',
+        
+        # Health and wellness
+        '의무실', '보건실', '응급실', '구급실', '간호실',
+        '상담실', '심리상담실', '카운슬링룸', '멘탈케어룸',
+        '휴식실', '수면실', '낮잠실', '안식실', '명상실',
+        '수유실', '모유수유실', '육아휴게실', '맘스룸',
+        '기도실', '종교실', '예배실', '명상실', '묵상실',
+        '헬스장', '운동실', '피트니스룸', '체육관', '짐',
+        '요가실', '필라테스실', '스트레칭룸', '운동기구실',
+        '샤워실', '세면실', '탈의실', '사우나', '찜질방',
+        
+        # Bathrooms and facilities
+        '화장실', '남자화장실', '여자화장실', '남녀공용화장실',
+        '장애인화장실', '휠체어화장실', '다목적화장실',
+        '공용화장실', '직원화장실', '고객화장실', '방문자화장실',
+        '세면실', '세면대', '파우더룸', '화장실습실',
+        
+        # Departments and organizational units
+        '인사부', '인사팀', '인사과', '인적자원부', 'HR부서',
+        '총무부', '총무팀', '총무과', '관리부', '사무관리팀',
+        '회계부', '회계팀', '회계과', '경리부', '재무회계팀',
+        '재무부', '재무팀', '재무과', '자금관리팀', '투자관리팀',
+        '영업부', '영업팀', '영업과', '세일즈팀', '판매부',
+        '마케팅부', '마케팅팀', '홍보부', '광고부', '브랜딩팀',
+        '기획부', '기획팀', '전략기획팀', '사업기획팀', '경영기획실',
+        '개발부', '개발팀', '기술개발팀', '제품개발팀', 'R&D팀',
+        '연구개발부', '연구소', '기술연구소', '연구센터',
+        '품질보증부', '품질관리팀', 'QA팀', 'QC팀', '검사팀',
+        '고객서비스부', '고객지원팀', '콜센터', '헬프데스크',
+        '기술지원부', '기술지원팀', '테크니컬서포트', 'IT지원팀',
+        '교육부', '교육팀', '연수원', '교육센터', '인재개발팀',
+        '법무부', '법무팀', '준법감시팀', '컴플라이언스팀',
+        '감사부', '감사팀', '내부감사실', '리스크관리팀',
+        '구매부', '구매팀', '조달팀', '자재관리팀', '물류팀',
+        '생산부', '생산팀', '제조팀', '공장관리팀', '품질관리팀',
+        '정보시스템부', 'IT부', '전산팀', '시스템관리팀',
+        
+        # Building and facility terms
+        '본사', '지사', '지점', '영업소', '사업소', '출장소',
+        '사옥', '오피스빌딩', '업무용빌딩', '상업용빌딩',
+        '층', '1층', '2층', '지하층', '옥상층', '중간층',
+        '동', '서동', '남동', '북동', '중앙동', '별관',
+        '구역', '섹션', '존', '에리어', '블록', '윙',
+        '복도', '홀웨이', '통로', '연결통로', '내부통로',
+        '엘리베이터', '승강기', '에스컬레이터', '계단', '비상계단',
+        '주차장', '지하주차장', '옥상주차장', '직원주차장',
+        '옥상', '루프탑', '테라스', '발코니', '야외공간'
     ]
     
     @classmethod
@@ -332,17 +468,17 @@ class FloorPlanOCRDetector:
             except Exception as e:
                 logger.error(f"Error in enhanced OCR: {str(e)}")
             
-            # Method 4: OCR with very aggressive settings for small text
+            # Method 5: OCR with very aggressive settings for small text
             logger.info("Running OCR with aggressive settings for small text...")
             try:
                 results = self.reader.readtext(image, 
-                                            width_ths=0.1,  # Very low width threshold
-                                            height_ths=0.1,  # Very low height threshold
+                                            width_ths=0.05,  # Extremely low width threshold
+                                            height_ths=0.05,  # Extremely low height threshold
                                             paragraph=False,
                                             detail=1,
-                                            min_size=5)  # Allow very small text
+                                            min_size=3)  # Allow very small text
                 for (bbox, text, confidence) in results:
-                    if text.strip() and confidence > 0.02:  # Extremely low threshold
+                    if text.strip() and confidence > 0.01:  # Extremely low threshold
                         x_coords = [point[0] for point in bbox]
                         y_coords = [point[1] for point in bbox]
                         bbox_formatted = [int(min(x_coords)), int(min(y_coords)), int(max(x_coords)), int(max(y_coords))]
@@ -354,6 +490,32 @@ class FloorPlanOCRDetector:
                         })
             except Exception as e:
                 logger.error(f"Error in aggressive OCR: {str(e)}")
+            
+            # Method 6: OCR on preprocessed and upscaled image for better small text detection
+            logger.info("Running OCR on preprocessed and upscaled image...")
+            try:
+                preprocessed = self.preprocess_image_for_ocr(image, save_debug=False)
+                upscaled_preprocessed = cv2.resize(preprocessed, None, fx=2.0, fy=2.0, interpolation=cv2.INTER_CUBIC)
+                results = self.reader.readtext(upscaled_preprocessed, 
+                                            width_ths=0.1,
+                                            height_ths=0.1,
+                                            paragraph=False,
+                                            detail=1)
+                for (bbox, text, confidence) in results:
+                    # More stringent filtering for upscaled results
+                    if text.strip() and confidence > 0.1 and len(text.strip()) > 1:  # Require at least 2 characters
+                        # Scale bbox coordinates back to original size
+                        x_coords = [point[0] / 2.0 for point in bbox]
+                        y_coords = [point[1] / 2.0 for point in bbox]
+                        bbox_formatted = [int(min(x_coords)), int(min(y_coords)), int(max(x_coords)), int(max(y_coords))]
+                        all_detections.append({
+                            'text': text.strip(),
+                            'bbox': bbox_formatted,
+                            'confidence': confidence,
+                            'method': 'preprocessed_upscaled'
+                        })
+            except Exception as e:
+                logger.error(f"Error in preprocessed upscaled OCR: {str(e)}")
             
             # Remove duplicates with improved logic
             unique_detections = []
@@ -495,6 +657,26 @@ class FloorPlanOCRDetector:
             if not text:
                 continue
             
+            # Skip single characters or very short text (likely OCR noise)
+            if len(text.strip()) <= 1:
+                logger.debug(f"Filtered single character: {text}")
+                continue
+            
+            # Skip text with very low confidence unless it's a known room word
+            confidence = det.get('confidence', 0)
+            if confidence < 0.3:
+                # Allow low confidence only for known room words
+                known_room_words = ['formal', 'living', 'dining', 'kitchen', 'bedroom', 'bathroom', 'office', 'room']
+                if not any(word in text.lower() for word in known_room_words):
+                    logger.debug(f"Filtered low confidence non-room text: {text} (confidence: {confidence:.3f})")
+                    continue
+            
+            # Skip text that's mostly non-alphanumeric (likely symbols or noise)
+            alphanumeric_chars = sum(1 for c in text if c.isalnum())
+            if alphanumeric_chars / len(text) < 0.5:  # Less than 50% alphanumeric
+                logger.debug(f"Filtered non-alphanumeric text: {text}")
+                continue
+            
             # Skip obvious watermarks
             text_lower = text.lower()
             if any(watermark in text_lower for watermark in WATERMARK_KEYWORDS):
@@ -504,11 +686,6 @@ class FloorPlanOCRDetector:
             # Skip standalone numbers (likely room numbers detected separately)
             if text.strip().isdigit() and len(text.strip()) <= 2:
                 logger.debug(f"Filtered standalone number: {text}")
-                continue
-            
-            # Skip single characters or very short text (likely OCR noise)
-            if len(text.strip()) <= 1:
-                logger.debug(f"Filtered single character: {text}")
                 continue
             
             # Check if it's a valid room name first (before filtering)
@@ -666,6 +843,149 @@ class FloorPlanOCRDetector:
         
         return cleaned.strip()
 
+    def _merge_nearby_text(self, detections: List[Dict]) -> List[Dict]:
+        """
+        Merge nearby text detections that should be combined into single room names.
+        
+        Args:
+            detections: List of text detections
+            
+        Returns:
+            List of merged text detections
+        """
+        if not detections:
+            return detections
+        
+        merged = []
+        used_indices = set()
+        
+        # Sort detections by position (left to right, top to bottom)
+        sorted_detections = sorted(detections, key=lambda x: (x['bbox'][1], x['bbox'][0]))
+        
+        for i, detection in enumerate(sorted_detections):
+            if i in used_indices:
+                continue
+                
+            current_text = detection['text'].strip()
+            current_bbox = detection['bbox']
+            current_center = ((current_bbox[0] + current_bbox[2]) / 2, (current_bbox[1] + current_bbox[3]) / 2)
+            
+            # Skip single character detections for merging (likely noise)
+            if len(current_text) <= 1:
+                merged.append(detection)
+                used_indices.add(i)
+                continue
+            
+            # Look for nearby text that should be merged
+            candidates_to_merge = [detection]
+            
+            for j, other_detection in enumerate(sorted_detections):
+                if i == j or j in used_indices:
+                    continue
+                    
+                other_text = other_detection['text'].strip()
+                other_bbox = other_detection['bbox']
+                other_center = ((other_bbox[0] + other_bbox[2]) / 2, (other_bbox[1] + other_bbox[3]) / 2)
+                
+                # Skip single character detections for merging (likely noise)
+                if len(other_text) <= 1:
+                    continue
+                
+                # Check if texts should be merged based on proximity and content
+                should_merge = False
+                
+                # Check for horizontal proximity (same line)
+                vertical_distance = abs(current_center[1] - other_center[1])
+                horizontal_distance = abs(current_center[0] - other_center[0])
+                
+                # Reasonable search distance for merging
+                max_vertical_distance = 30  # Same line tolerance
+                max_horizontal_distance = 150  # Reasonable horizontal distance
+                
+                if vertical_distance < max_vertical_distance and horizontal_distance < max_horizontal_distance:
+                    # Check for compound room name patterns
+                    combined_texts = [current_text.lower(), other_text.lower()]
+                    combined_texts.sort()  # Sort to handle order independence
+                    
+                    # Common compound room name patterns
+                    compound_patterns = [
+                        ['eat-in', 'kitchen'], ['eat', 'kitchen'],
+                        ['formal', 'living'], ['formal', 'dining'],
+                        ['dining', 'room'], ['living', 'room'], ['family', 'room'],
+                        ['guest', 'room'], ['master', 'bedroom'], ['master', 'bath'],
+                        ['1/2', 'bath'], ['half', 'bath'], ['3/4', 'bath'],
+                        ['powder', 'room'], ['laundry', 'room'], ['utility', 'room'],
+                        ['walk-in', 'closet'], ['home', 'office'], ['great', 'room']
+                    ]
+                    
+                    # Check if the combination matches any compound pattern
+                    for pattern in compound_patterns:
+                        if combined_texts == pattern:
+                            should_merge = True
+                            logger.info(f"Merging compound pattern: {combined_texts}")
+                            break
+                    
+                    # Special handling for "formal" as a modifier
+                    if not should_merge and 'formal' in combined_texts:
+                        other_word = [word for word in combined_texts if word != 'formal'][0] if len(combined_texts) == 2 else None
+                        if other_word and other_word in ['living', 'dining', 'room', 'lounge']:
+                            should_merge = True
+                            logger.info(f"Merging formal space: {combined_texts}")
+                    
+                    # Check for generic patterns like "word room"
+                    if not should_merge:
+                        for text in combined_texts:
+                            if text in ['room', 'office', 'area', 'space', 'closet', 'bath', 'bathroom']:
+                                other_text_clean = [t for t in combined_texts if t != text][0] if len(combined_texts) == 2 else None
+                                if other_text_clean and len(other_text_clean) > 2:  # Reasonable word length
+                                    should_merge = True
+                                    logger.info(f"Merging generic pattern: {combined_texts}")
+                                    break
+                
+                if should_merge:
+                    candidates_to_merge.append(other_detection)
+                    used_indices.add(j)
+            
+            # Merge the candidates
+            if len(candidates_to_merge) > 1:
+                # Sort candidates by x-coordinate (left to right)
+                candidates_to_merge.sort(key=lambda x: x['bbox'][0])
+                
+                # Combine texts
+                merged_text = ' '.join([candidate['text'].strip() for candidate in candidates_to_merge])
+                
+                # Calculate combined bounding box
+                all_x1 = [candidate['bbox'][0] for candidate in candidates_to_merge]
+                all_y1 = [candidate['bbox'][1] for candidate in candidates_to_merge]
+                all_x2 = [candidate['bbox'][2] for candidate in candidates_to_merge]
+                all_y2 = [candidate['bbox'][3] for candidate in candidates_to_merge]
+                
+                merged_bbox = [min(all_x1), min(all_y1), max(all_x2), max(all_y2)]
+                
+                # Use the highest confidence
+                merged_confidence = max([candidate['confidence'] for candidate in candidates_to_merge])
+                
+                # Combine methods
+                methods = list(set([candidate.get('method', 'unknown') for candidate in candidates_to_merge]))
+                merged_method = '+'.join(methods)
+                
+                merged_detection = {
+                    'text': merged_text,
+                    'bbox': merged_bbox,
+                    'confidence': merged_confidence,
+                    'method': merged_method
+                }
+                
+                merged.append(merged_detection)
+                logger.info(f"Merged texts: {[c['text'] for c in candidates_to_merge]} -> '{merged_text}'")
+            else:
+                merged.append(detection)
+            
+            used_indices.add(i)
+        
+        logger.info(f"Merged {len(detections)} detections into {len(merged)} combined detections")
+        return merged
+
     def get_space_names(self, image: np.ndarray, wall_bboxes: Optional[List[List[int]]] = None) -> List[Dict]:
         """
         Main method to detect space names in a floor plan image.
@@ -681,8 +1001,11 @@ class FloorPlanOCRDetector:
             # Detect all text regions
             text_regions = self.detect_text_regions(image)
             
-            # Apply minimal filtering
-            filtered_regions = self.filter_space_names(text_regions, image.shape[:2])
+            # Merge nearby text that should be combined (e.g., "Formal" + "Dining")
+            merged_regions = self._merge_nearby_text(text_regions)
+            
+            # Apply filtering to merged regions
+            filtered_regions = self.filter_space_names(merged_regions, image.shape[:2])
             
             # Format as space names with text cleanup
             space_names = []

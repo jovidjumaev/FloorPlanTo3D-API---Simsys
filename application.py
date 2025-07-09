@@ -577,7 +577,7 @@ def createVisualization(original_image, model_results, image_width, image_height
 			center_y = (y1 + y2) / 2
 			
 			# Draw door centerpoint (cyan circle)
-			center_radius = 8
+			center_radius = 6
 			draw.ellipse([center_x - center_radius, center_y - center_radius, 
 						 center_x + center_radius, center_y + center_radius], 
 						fill=(0, 255, 255), outline=(0, 0, 0), width=2)
@@ -2408,7 +2408,7 @@ def create_wall_visualization(original_image, model_results, wall_parameters, ju
 			center_y = (y1 + y2) / 2
 			
 			# Draw door centerpoint (cyan circle)
-			center_radius = 8
+			center_radius = 4
 			draw.ellipse([center_x - center_radius, center_y - center_radius, 
 						 center_x + center_radius, center_y + center_radius], 
 						fill=(0, 255, 255), outline=(0, 0, 0), width=2)
@@ -2421,6 +2421,7 @@ def create_wall_visualization(original_image, model_results, wall_parameters, ju
 			# Calculate window center
 			center_x = (x1 + x2) / 2
 			center_y = (y1 + y2) / 2
+		
 			
 			# Draw window centerpoint (orange circle)
 			center_radius = 6
@@ -2533,9 +2534,9 @@ def create_wall_visualization(original_image, model_results, wall_parameters, ju
 				if isinstance(p2, (list, numpy.ndarray)):
 					p2 = tuple(p2) if isinstance(p2, list) else tuple(p2.tolist())
 				
-				# Skip drawing lines in legend area (top-left 40x180 pixel box)
+				# Skip drawing lines in legend area (top-left 40x140 pixel box)
 				legend_area_x = 40
-				legend_area_y = 180  # legend_y (10) + 8 items * 20 pixels
+				legend_area_y = 140  # legend_y (10) + 8 items * 15 pixels
 				if ((p1[0] < legend_area_x and p1[1] < legend_area_y) or 
 					(p2[0] < legend_area_x and p2[1] < legend_area_y)):
 					continue
@@ -2593,16 +2594,16 @@ def create_wall_visualization(original_image, model_results, wall_parameters, ju
 	]
 	
 	try:
-		legend_font = ImageFont.truetype("/System/Library/Fonts/Arial.ttf", 12)
+		legend_font = ImageFont.truetype("/System/Library/Fonts/Arial.ttf", 10)
 	except:
 		legend_font = ImageFont.load_default()
 	
 	for i, (text, color) in enumerate(legend_items):
-		y_pos = legend_y + i * 20
-		# Draw color indicator
-		draw.rectangle([10, y_pos, 25, y_pos+10], fill=color, outline=(0, 0, 0))
+		y_pos = legend_y + i * 15
+		# Draw color indicator (smaller)
+		draw.rectangle([10, y_pos, 20, y_pos+8], fill=color, outline=(0, 0, 0))
 		# Draw text
-		draw.text((30, y_pos-2), text, fill=(0, 0, 0), font=legend_font)
+		draw.text((25, y_pos-1), text, fill=(0, 0, 0), font=legend_font)
 	
 	# After drawing centerlines (existing loop) add fallback for missing ones
 	# Draw junctions
@@ -2675,9 +2676,9 @@ def create_wall_visualization(original_image, model_results, wall_parameters, ju
 			# draw remaining segments
 			for sx, ex in segments:
 				if ex - sx > 2:
-					# Skip drawing lines in legend area (top-left 40x180 pixel box)
+					# Skip drawing lines in legend area (top-left 40x140 pixel box)
 					legend_area_x = 40
-					legend_area_y = 180  # legend_y (10) + 8 items * 20 pixels
+					legend_area_y = 140  # legend_y (10) + 8 items * 15 pixels
 					if ((sx < legend_area_x and cy < legend_area_y) or 
 						(ex < legend_area_x and cy < legend_area_y)):
 						continue
@@ -2699,9 +2700,9 @@ def create_wall_visualization(original_image, model_results, wall_parameters, ju
 					segments = updated
 			for sy, ey in segments:
 				if ey - sy > 2:
-					# Skip drawing lines in legend area (top-left 40x180 pixel box)
+					# Skip drawing lines in legend area (top-left 40x140 pixel box)
 					legend_area_x = 40
-					legend_area_y = 180  # legend_y (10) + 8 items * 20 pixels
+					legend_area_y = 140  # legend_y (10) + 8 items * 15 pixels
 					if ((cx < legend_area_x and sy < legend_area_y) or 
 						(cx < legend_area_x and ey < legend_area_y)):
 						continue
