@@ -826,13 +826,37 @@ class FloorPlanOCRDetector:
         # Remove extra whitespace
         cleaned = text.strip()
         
+        # Filter out corrupted Unicode text
+        if len(cleaned) < 10:  # Short strings with corrupted Unicode
+            # Check for corrupted Korean Unicode sequences like \uc624h
+            if '\\u' in cleaned or any(ord(c) > 0x1F000 for c in cleaned):
+                logger.debug(f"Filtering out corrupted Unicode text: '{cleaned}'")
+                return ""
+        
         # Remove common OCR artifacts
         cleaned = re.sub(r'[^\w\s/\-가-힣]', '', cleaned)  # Keep alphanumeric, spaces, slashes, hyphens, Korean
         
+        # Remove isolated single characters that are likely OCR noise
+        words = cleaned.split()
+        valid_words = []
+        for word in words:
+            # Keep words that are at least 2 characters, or single characters that are numbers
+            if len(word) >= 2 or word.isdigit():
+                valid_words.append(word)
+            # Also keep single letters if they're part of common abbreviations
+            elif word.lower() in ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z']:
+                # Only keep if it's not isolated noise
+                if len(words) > 1:
+                    valid_words.append(word)
+        
+        cleaned = ' '.join(valid_words)
+        
         # Remove trailing numbers that might be room numbers detected as part of the name
-        # But keep fractions like "1/2"
+        # But keep fractions like "1/2" and numbered rooms like "Bath1", "Bath2"
         if not re.search(r'\d+/\d+', cleaned):  # If it's not a fraction
-            cleaned = re.sub(r'\s+\d+$', '', cleaned)  # Remove trailing numbers
+            # Don't remove numbers that are part of room names (like Bath1, Bath2)
+            if not re.search(r'(bath|bedroom|room)\s*\d+$', cleaned.lower()):
+                cleaned = re.sub(r'\s+\d+$', '', cleaned)  # Remove trailing numbers
         
         # Clean up multiple spaces
         cleaned = re.sub(r'\s+', ' ', cleaned)
@@ -842,6 +866,97 @@ class FloorPlanOCRDetector:
             cleaned = cleaned.title()
         
         return cleaned.strip()
+
+    def _deduplicate_detections(self, detections: List[Dict]) -> List[Dict]:
+        """
+        Remove duplicate detections of the same text at the same location.
+        
+        Args:
+            detections: List of text detections
+            
+        Returns:
+            List of deduplicated text detections
+        """
+        if not detections:
+            return detections
+        
+        deduplicated = []
+        used_indices = set()
+        
+        for i, detection in enumerate(detections):
+            if i in used_indices:
+                continue
+                
+            current_text = detection['text'].strip().lower()
+            current_bbox = detection['bbox']
+            current_center = ((current_bbox[0] + current_bbox[2]) / 2, (current_bbox[1] + current_bbox[3]) / 2)
+            
+            # Skip corrupted or invalid text
+            if len(current_text) < 2 or not current_text.replace(' ', '').replace('-', '').replace('/', '').isalnum():
+                # Check if it's valid Korean
+                is_korean = any('\uAC00' <= c <= '\uD7A3' for c in current_text)
+                if not is_korean:
+                    logger.debug(f"Skipping corrupted text: '{current_text}'")
+                    used_indices.add(i)
+                    continue
+            
+            # Find duplicates of this detection
+            candidates_to_merge = [detection]
+            
+            for j, other_detection in enumerate(detections):
+                if i == j or j in used_indices:
+                    continue
+                    
+                other_text = other_detection['text'].strip().lower()
+                other_bbox = other_detection['bbox']
+                other_center = ((other_bbox[0] + other_bbox[2]) / 2, (other_bbox[1] + other_bbox[3]) / 2)
+                
+                # Check if this is a duplicate (same location, similar text)
+                distance = ((current_center[0] - other_center[0]) ** 2 + (current_center[1] - other_center[1]) ** 2) ** 0.5
+                
+                if distance < 30:  # Very close locations (within 30 pixels)
+                    # Check text similarity
+                    is_duplicate = False
+                    
+                    # Exact match
+                    if current_text == other_text:
+                        is_duplicate = True
+                    
+                    # One is substring of the other (e.g., "Bath" vs "Bath1")
+                    elif current_text in other_text or other_text in current_text:
+                        is_duplicate = True
+                    
+                    # OCR errors (e.g., "Laundry" vs "Lauivdry") 
+                    elif len(current_text) > 3 and len(other_text) > 3:
+                        # Simple character similarity check
+                        common_chars = sum(1 for a, b in zip(current_text, other_text) if a == b)
+                        similarity = common_chars / max(len(current_text), len(other_text))
+                        if similarity > 0.7:  # 70% character similarity
+                            is_duplicate = True
+                    
+                    if is_duplicate:
+                        candidates_to_merge.append(other_detection)
+                        used_indices.add(j)
+                        logger.debug(f"Found duplicate: '{current_text}' and '{other_text}'")
+            
+            # Choose the best detection from duplicates
+            if candidates_to_merge:
+                # Sort by confidence, then by text quality (longer text usually better)
+                best_detection = max(candidates_to_merge, 
+                                   key=lambda x: (x['confidence'], len(x['text'].strip())))
+                
+                # Log what we're keeping vs discarding
+                if len(candidates_to_merge) > 1:
+                    kept_text = best_detection['text'].strip()
+                    discarded_texts = [c['text'].strip() for c in candidates_to_merge if c != best_detection]
+                    logger.info(f"Deduplicated: kept '{kept_text}', discarded {discarded_texts}")
+                
+                deduplicated.append(best_detection)
+            
+            used_indices.add(i)
+        
+        logger.info(f"Deduplicated {len(detections)} detections into {len(deduplicated)} unique detections")
+        return deduplicated
 
     def _merge_nearby_text(self, detections: List[Dict]) -> List[Dict]:
         """
@@ -1001,20 +1116,29 @@ class FloorPlanOCRDetector:
             # Detect all text regions
             text_regions = self.detect_text_regions(image)
             
-            # Merge nearby text that should be combined (e.g., "Formal" + "Dining")
-            merged_regions = self._merge_nearby_text(text_regions)
+            # First, remove duplicates (same text at same location from different detection methods)
+            deduplicated_regions = self._deduplicate_detections(text_regions)
+            
+            # Then merge nearby text that should be combined (e.g., "Formal" + "Dining")
+            merged_regions = self._merge_nearby_text(deduplicated_regions)
             
             # Apply filtering to merged regions
             filtered_regions = self.filter_space_names(merged_regions, image.shape[:2])
             
             # Format as space names with text cleanup
             space_names = []
-            for i, region in enumerate(filtered_regions):
+            space_counter = 1
+            for region in filtered_regions:
                 # Clean up the text
                 cleaned_text = self._clean_room_name(region['text'])
                 
+                # Skip if text becomes empty after cleaning
+                if not cleaned_text or len(cleaned_text.strip()) == 0:
+                    logger.debug(f"Skipping empty text after cleaning: '{region['text']}'")
+                    continue
+                
                 space_name = {
-                    'id': f'SPACE_{i+1}',
+                    'id': f'SPACE_{space_counter}',
                     'name': cleaned_text,
                     'bbox': region['bbox'],
                     'confidence': region['confidence'],
@@ -1025,6 +1149,7 @@ class FloorPlanOCRDetector:
                     }
                 }
                 space_names.append(space_name)
+                space_counter += 1
             
             logger.info(f"Final result: {len(space_names)} space names detected")
             return space_names
