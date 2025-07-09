@@ -1,3 +1,4 @@
+# File utility functions for output management
 import os
 import json
 from config.constants import ROOT_DIR, IMAGES_OUTPUT_DIR, JSON_OUTPUT_DIR

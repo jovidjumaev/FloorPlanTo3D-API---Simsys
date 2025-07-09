@@ -1,4 +1,5 @@
-import numpy
+# Wall analysis module for floor plan processing
+import numpy as np
 from scipy.ndimage import distance_transform_edt
 from utils.geometry import find_nearest_valid_point
 from utils.conversions import pixels_to_mm, convert_thickness_to_mm, convert_centerline_to_mm, convert_bbox_to_mm

@@ -1,6 +1,8 @@
+# Configuration constants for FloorPlanTo3D API
+# Defines paths and settings
 import os
 
-# Project root directory
+# Root directory and output paths
 ROOT_DIR = os.path.abspath("./")
 
 # Output directories

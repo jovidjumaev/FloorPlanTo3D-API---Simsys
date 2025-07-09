@@ -1,5 +1,6 @@
 # OCR Detector for Floor Plan Text Recognition
 # Detects space names and labels in multiple languages
+# Enhanced with deduplication and multi-language support
 
 import cv2
 import numpy as np

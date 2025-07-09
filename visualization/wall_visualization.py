@@ -1,4 +1,5 @@
-import numpy
+# Visualization module for floor plan analysis results
+import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 from utils.conversions import mm_to_pixels, pixels_to_mm
 from utils.geometry import split_line_around_windows

@@ -1,3 +1,5 @@
+# Image processing and loading utilities
+import os
 import numpy
 import cv2
 

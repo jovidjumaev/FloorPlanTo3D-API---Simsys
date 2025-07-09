@@ -1,3 +1,4 @@
+# Geometric utility functions for floor plan analysis
 import numpy
 
 def line_intersects_rectangle(x1, y1, x2, y2, rect_x1, rect_y1, rect_x2, rect_y2):
