@@ -190,8 +190,8 @@ def split_line_around_windows(x1, y1, x2, y2, bboxes, class_ids):
     for idx, cid in enumerate(class_ids):
         if cid == 2:  # window
             wy1, wx1, wy2, wx2 = bboxes[idx]
-            # Add moderate margin around window to balance exclusion vs coverage
-            margin = 5  # Balanced margin - not too aggressive
+            # Add slightly larger margin around window to ensure better exclusion
+            margin = 6  # Slightly increased for better window avoidance
             wx1 -= margin
             wy1 -= margin
             wx2 += margin
@@ -210,12 +210,22 @@ def split_line_around_windows(x1, y1, x2, y2, bboxes, class_ids):
             # Check if line crosses window or has significant overlap
             line_crosses = line_intersects_rectangle(sx, sy, ex, ey, wx1, wy1, wx2, wy2)
             
-            # Only check endpoint containment if line is very short (likely endpoint issue)
+            # Check endpoint containment for short segments or if endpoints are very close to window
             segment_length = ((ex - sx) ** 2 + (ey - sy) ** 2) ** 0.5
-            if segment_length < 10:  # Very short segment
+            if segment_length < 15:  # Slightly increased from 10 to 15
                 start_inside = (wx1 <= sx <= wx2 and wy1 <= sy <= wy2)
                 end_inside = (wx1 <= ex <= wx2 and wy1 <= ey <= wy2)
                 if start_inside or end_inside:
+                    line_crosses = True
+            
+            # Additional check: if either endpoint is very close to window edge (within 2 pixels)
+            else:
+                close_margin = 2
+                start_very_close = (wx1 - close_margin <= sx <= wx2 + close_margin and 
+                                   wy1 - close_margin <= sy <= wy2 + close_margin)
+                end_very_close = (wx1 - close_margin <= ex <= wx2 + close_margin and 
+                                 wy1 - close_margin <= ey <= wy2 + close_margin)
+                if start_very_close or end_very_close:
                     line_crosses = True
             
             if line_crosses:
@@ -247,16 +257,23 @@ def split_line_at_rectangle(x1, y1, x2, y2, rect_x1, rect_y1, rect_x2, rect_y2):
     # Check if line actually crosses the rectangle
     line_crosses = line_intersects_rectangle(x1, y1, x2, y2, rect_x1, rect_y1, rect_x2, rect_y2)
     
-    # Check endpoint containment only for very short segments or if line clearly crosses
+    # Check endpoint containment
     start_inside = (rect_x1 <= x1 <= rect_x2 and rect_y1 <= y1 <= rect_y2)
     end_inside = (rect_x1 <= x2 <= rect_x2 and rect_y1 <= y2 <= rect_y2)
     
-    # If no intersection and endpoints aren't both inside, return original line
-    if not line_crosses and not (start_inside and end_inside):
+    # Additional check: if endpoints are very close to window edge
+    close_margin = 2
+    start_very_close = (rect_x1 - close_margin <= x1 <= rect_x2 + close_margin and 
+                       rect_y1 - close_margin <= y1 <= rect_y2 + close_margin)
+    end_very_close = (rect_x1 - close_margin <= x2 <= rect_x2 + close_margin and 
+                     rect_y1 - close_margin <= y2 <= rect_y2 + close_margin)
+    
+    # If no intersection and endpoints aren't inside or very close, return original line
+    if not line_crosses and not (start_inside or end_inside or start_very_close or end_very_close):
         return [((x1, y1), (x2, y2))]
     
-    # If both endpoints are inside rectangle, don't draw anything
-    if start_inside and end_inside:
+    # If both endpoints are inside rectangle or very close to it, don't draw anything
+    if (start_inside and end_inside) or (start_very_close and end_very_close):
         return []
     
     # Find intersection points with rectangle edges
@@ -1732,11 +1749,26 @@ def extract_centerline_coords(segment_coords):
 
 
 def extract_centerline_coords_with_validation(segment_coords, wall_mask, min_length=2):
-    """Extract ordered centerline coordinates with improved curve preservation for angled walls."""
+    """Extract centered and straight centerline coordinates using distance transform."""
     if len(segment_coords) < 2:
         return []
     
-    # First, order the skeleton points properly
+    # Calculate bounding box from segment coordinates
+    if len(segment_coords) > 0:
+        coords_array = numpy.array(segment_coords)
+        min_y, min_x = numpy.min(coords_array, axis=0)
+        max_y, max_x = numpy.max(coords_array, axis=0)
+        bbox = (min_x, min_y, max_x, max_y)
+    else:
+        bbox = None
+    
+    # Try the new centered straight centerline approach first
+    centerline = calculate_centered_straight_centerline(wall_mask, bbox)
+    
+    if len(centerline) >= min_length:
+        return centerline
+    
+    # Fallback to original approach if new method fails
     ordered_centerline = order_centerline_points_connectivity(segment_coords)
     if len(ordered_centerline) < min_length:
         return []
@@ -3031,71 +3063,76 @@ def create_wall_visualization(original_image, model_results, wall_parameters, ju
 		# If we have a mask, try to compute a better centerline
 		if wall_mask is not None:
 			try:
-				# Extract skeleton-based centerline for this wall
-				from skimage.morphology import skeletonize
-				skeleton = skeletonize(wall_mask)
-				skeleton_coords = numpy.where(skeleton)
+				# Use the new centered straight centerline approach
+				bbox = (x1, y1, x2, y2)
+				centerline_coords = calculate_centered_straight_centerline(wall_mask, bbox)
 				
-				if len(skeleton_coords[0]) > 1:
-					# Convert to (y, x) coordinates
-					skeleton_points = list(zip(skeleton_coords[0], skeleton_coords[1]))
-					# Order the points using our improved algorithm
-					ordered_points = order_centerline_points_connectivity(skeleton_points)
+				if len(centerline_coords) > 1:
+					# Draw the centered straight centerline
+					valid_segments = []
+					for j in range(1, len(centerline_coords)):
+						p1 = (centerline_coords[j-1][0], centerline_coords[j-1][1])  # (x, y)
+						p2 = (centerline_coords[j][0], centerline_coords[j][1])    # (x, y)
+						
+						# Skip drawing lines in legend area
+						legend_area_x = 40
+						legend_area_y = 140
+						if ((p1[0] < legend_area_x and p1[1] < legend_area_y) or 
+							(p2[0] < legend_area_x and p2[1] < legend_area_y)):
+							continue
+						
+						# Split centerline segment around windows instead of excluding entirely
+						segments_to_draw = split_line_around_windows(p1[0], p1[1], p2[0], p2[1], bboxes, class_ids)
+						valid_segments.extend(segments_to_draw)
 					
-					if len(ordered_points) > 1:
-						# Draw the skeleton-based centerline
-						valid_segments = []
-						for j in range(1, len(ordered_points)):
-							p1 = (ordered_points[j-1][0], ordered_points[j-1][1])  # (x, y)
-							p2 = (ordered_points[j][0], ordered_points[j][1])    # (x, y)
-							
-							# Skip drawing lines in legend area
-							legend_area_x = 40
-							legend_area_y = 140
-							if ((p1[0] < legend_area_x and p1[1] < legend_area_y) or 
-								(p2[0] < legend_area_x and p2[1] < legend_area_y)):
-								continue
-							
-							# Split centerline segment around windows instead of excluding entirely
-							segments_to_draw = split_line_around_windows(p1[0], p1[1], p2[0], p2[1], bboxes, class_ids)
-							valid_segments.extend(segments_to_draw)
-						
-						# Draw only the valid segments that don't cross windows
-						for seg_data in valid_segments:
-							if len(seg_data) == 2:  # It's a pair of points
-								p1, p2 = seg_data
-								draw.line([p1, p2], fill=centerline_color, width=4)
-						
-						if valid_segments:  # Only mark as drawn if we actually drew something
-							centerline_drawn = True
-							walls_with_centerlines.add(wall_bbox)  # Mark as having centerline
+					# Draw only the valid segments that don't cross windows
+					for seg_data in valid_segments:
+						if len(seg_data) == 2:  # It's a pair of points
+							p1, p2 = seg_data
+							draw.line([p1, p2], fill=centerline_color, width=4)
+					
+					if valid_segments:  # Only mark as drawn if we actually drew something
+						centerline_drawn = True
+						walls_with_centerlines.add(wall_bbox)  # Mark as having centerline
 			except:
-				# If skeleton extraction fails, fall back to simple line
+				# If centered approach fails, fall back to simple line
 				pass
 		
 		# Simple fallback for when mask is not available or skeleton fails
 		if not centerline_drawn:
+			# Create a more centered line by using multiple intermediate points
 			if width_box >= height_box:
+				# Horizontal wall - create points along the centerline
 				cy = (y1 + y2) // 2
-				p_start = (x1, cy)
-				p_end = (x2, cy)
+				num_points = max(3, min(10, width_box // 20))  # Adaptive number of points
+				x_points = numpy.linspace(x1, x2, num_points)
+				centerline_points = [(x, cy) for x in x_points]
 			else:
+				# Vertical wall - create points along the centerline
 				cx = (x1 + x2) // 2
-				p_start = (cx, y1)
-				p_end = (cx, y2)
+				num_points = max(3, min(10, height_box // 20))  # Adaptive number of points
+				y_points = numpy.linspace(y1, y2, num_points)
+				centerline_points = [(cx, y) for y in y_points]
 			
-			# Skip drawing lines in legend area
-			legend_area_x = 40
-			legend_area_y = 140
-			if ((p_start[0] < legend_area_x and p_start[1] < legend_area_y) or 
-				(p_end[0] < legend_area_x and p_end[1] < legend_area_y)):
-				continue
+			# Draw the centerline with multiple segments
+			valid_segments = []
+			for j in range(1, len(centerline_points)):
+				p1 = centerline_points[j-1]
+				p2 = centerline_points[j]
+				
+				# Skip drawing lines in legend area
+				legend_area_x = 40
+				legend_area_y = 140
+				if ((p1[0] < legend_area_x and p1[1] < legend_area_y) or 
+					(p2[0] < legend_area_x and p2[1] < legend_area_y)):
+					continue
+				
+				# Split centerline segment around windows instead of excluding entirely
+				segments_to_draw = split_line_around_windows(p1[0], p1[1], p2[0], p2[1], bboxes, class_ids)
+				valid_segments.extend(segments_to_draw)
 			
-			# Split centerline around windows instead of excluding entirely
-			segments_to_draw = split_line_around_windows(p_start[0], p_start[1], p_end[0], p_end[1], bboxes, class_ids)
-			
-			if segments_to_draw:  # If we have any valid segments to draw
-				for seg_start, seg_end in segments_to_draw:
+			if valid_segments:  # If we have any valid segments to draw
+				for seg_start, seg_end in valid_segments:
 					draw.line([seg_start, seg_end], fill=centerline_color, width=4)
 				walls_with_centerlines.add(wall_bbox)  # Mark as having centerline
 	
@@ -3442,6 +3479,151 @@ def calculate_perimeter_dimensions(exterior_walls):
 		"boundary_coverage": boundary_coverage,
 		"average_exterior_wall_length": total_perimeter_length / exterior_wall_count if exterior_wall_count > 0 else 0
 	}
+
+def calculate_centered_straight_centerline(wall_mask, bbox=None):
+    """
+    Calculate a straight, centered centerline using distance transform and geometric analysis.
+    
+    Args:
+        wall_mask: Binary mask of the wall
+        bbox: Optional bounding box to guide centerline direction
+    
+    Returns:
+        List of [x, y] coordinates for the centerline
+    """
+    if numpy.sum(wall_mask) < 10:
+        return []
+    
+    # Calculate distance transform to find medial axis
+    distance_map = distance_transform_edt(wall_mask)
+    
+    # Find the ridge (medial axis) points with high distance values
+    threshold = numpy.percentile(distance_map[distance_map > 0], 70)  # Top 30% of distances
+    ridge_points = numpy.where(distance_map >= threshold)
+    
+    if len(ridge_points[0]) < 2:
+        return []
+    
+    # Convert to (x, y) coordinates
+    ridge_coords = list(zip(ridge_points[1], ridge_points[0]))  # (x, y)
+    
+    # Use bounding box to determine primary direction
+    if bbox is not None:
+        x1, y1, x2, y2 = bbox
+        width = x2 - x1
+        height = y2 - y1
+        is_horizontal = width > height
+    else:
+        # Calculate orientation from ridge points
+        ridge_array = numpy.array(ridge_coords)
+        x_range = numpy.max(ridge_array[:, 0]) - numpy.min(ridge_array[:, 0])
+        y_range = numpy.max(ridge_array[:, 1]) - numpy.min(ridge_array[:, 1])
+        is_horizontal = x_range > y_range
+    
+    # Sort ridge points along the primary direction
+    if is_horizontal:
+        ridge_coords.sort(key=lambda p: p[0])  # Sort by x
+    else:
+        ridge_coords.sort(key=lambda p: p[1])  # Sort by y
+    
+    # Create a straight centerline by fitting a line through the ridge points
+    if len(ridge_coords) >= 2:
+        # Use robust line fitting
+        points = numpy.array(ridge_coords)
+        
+        # For horizontal walls, fit y = mx + b
+        # For vertical walls, fit x = my + b
+        if is_horizontal:
+            x_coords = points[:, 0]
+            y_coords = points[:, 1]
+            
+            # Find the line that best fits through the center
+            if len(x_coords) > 1:
+                # Use weighted average of y-coordinates for each x region
+                x_min, x_max = numpy.min(x_coords), numpy.max(x_coords)
+                
+                # Create evenly spaced points along the line
+                num_points = min(max(3, int((x_max - x_min) / 10)), 20)
+                straight_x = numpy.linspace(x_min, x_max, num_points)
+                
+                # For each x position, find the average y position of nearby ridge points
+                straight_y = []
+                for x in straight_x:
+                    # Find ridge points within a small window around this x
+                    window = 15  # pixels
+                    nearby_y = y_coords[numpy.abs(x_coords - x) <= window]
+                    if len(nearby_y) > 0:
+                        # Use weighted average, giving more weight to points with higher distance values
+                        nearby_x = x_coords[numpy.abs(x_coords - x) <= window]
+                        nearby_points = [(int(nx), int(ny)) for nx, ny in zip(nearby_x, nearby_y)]
+                        weights = [distance_map[py, px] for px, py in nearby_points if 0 <= py < distance_map.shape[0] and 0 <= px < distance_map.shape[1]]
+                        
+                        if weights:
+                            weighted_y = numpy.average(nearby_y, weights=weights)
+                        else:
+                            weighted_y = numpy.mean(nearby_y)
+                        straight_y.append(weighted_y)
+                    else:
+                        # Interpolate from previous points
+                        if len(straight_y) > 0:
+                            straight_y.append(straight_y[-1])
+                        else:
+                            straight_y.append(numpy.mean(y_coords))
+                
+                centerline = [[x, y] for x, y in zip(straight_x, straight_y)]
+        else:
+            # Vertical wall - similar logic but swapped axes
+            x_coords = points[:, 0]
+            y_coords = points[:, 1]
+            
+            if len(y_coords) > 1:
+                y_min, y_max = numpy.min(y_coords), numpy.max(y_coords)
+                
+                # Create evenly spaced points along the line
+                num_points = min(max(3, int((y_max - y_min) / 10)), 20)
+                straight_y = numpy.linspace(y_min, y_max, num_points)
+                
+                # For each y position, find the average x position of nearby ridge points
+                straight_x = []
+                for y in straight_y:
+                    window = 15  # pixels
+                    nearby_x = x_coords[numpy.abs(y_coords - y) <= window]
+                    if len(nearby_x) > 0:
+                        # Use weighted average
+                        nearby_y = y_coords[numpy.abs(y_coords - y) <= window]
+                        nearby_points = [(int(nx), int(ny)) for nx, ny in zip(nearby_x, nearby_y)]
+                        weights = [distance_map[py, px] for px, py in nearby_points if 0 <= py < distance_map.shape[0] and 0 <= px < distance_map.shape[1]]
+                        
+                        if weights:
+                            weighted_x = numpy.average(nearby_x, weights=weights)
+                        else:
+                            weighted_x = numpy.mean(nearby_x)
+                        straight_x.append(weighted_x)
+                    else:
+                        # Interpolate from previous points
+                        if len(straight_x) > 0:
+                            straight_x.append(straight_x[-1])
+                        else:
+                            straight_x.append(numpy.mean(x_coords))
+                
+                centerline = [[x, y] for x, y in zip(straight_x, straight_y)]
+    
+    # Final validation - ensure all points are within the wall mask
+    if 'centerline' in locals():
+        validated_centerline = []
+        for point in centerline:
+            x, y = int(point[0]), int(point[1])
+            if (0 <= y < wall_mask.shape[0] and 0 <= x < wall_mask.shape[1] and wall_mask[y, x]):
+                validated_centerline.append(point)
+            else:
+                # Find nearest valid point
+                nearest = find_nearest_valid_point(x, y, wall_mask, max_search_radius=10)
+                if nearest is not None:
+                    validated_centerline.append([nearest[1], nearest[0]])  # Convert to [x, y]
+        
+        return validated_centerline if len(validated_centerline) >= 2 else []
+    
+    return []
 
 if __name__ == '__main__':
 	application.debug = True
