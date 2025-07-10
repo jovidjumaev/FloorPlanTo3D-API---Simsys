@@ -29,13 +29,13 @@ def generate_window_notes(width, height, window_type):
 	
 	window_area = width * height
 	
-	# Window size analysis
+
 	if window_area < 1000:
 		notes.append("Small window - possibly for ventilation or light")
 	elif window_area > 8000:
 		notes.append("Large window - likely for significant natural lighting")
 	
-	# Window orientation analysis
+
 	if window_type == "horizontal":
 		notes.append("Horizontal window orientation")
 		if width > height * 2:
@@ -45,7 +45,7 @@ def generate_window_notes(width, height, window_type):
 		if height > width * 2:
 			notes.append("Tall vertical window - floor-to-ceiling style")
 	
-	# Aspect ratio insights
+
 	aspect_ratio = width / height if height > 0 else 0
 	if aspect_ratio > 3:
 		notes.append("Very wide window - modern architectural style")

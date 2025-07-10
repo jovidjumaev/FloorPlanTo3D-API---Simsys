@@ -41,7 +41,7 @@ def validate_centerline_in_walls(centerline_coords, wall_mask):
         x, y = coord
         # Check if point is within image bounds and in wall area
         if (0 <= y < wall_mask.shape[0] and 0 <= x < wall_mask.shape[1] and 
-    bool(wall_mask[y, x])): # FIXED: removed numpy.any()
+    bool(wall_mask[y, x])):
             validated_coords.append(coord)
         else:
             # Try to find a nearby valid point

@@ -14,7 +14,7 @@ def myImageLoader(imageInput, enhance_for_office=False):
 		# Convert to grayscale
 		gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
 		
-		# Apply adaptive thresholding to better handle varying line intensities
+	
 		binary = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
 		
 		# Remove noise

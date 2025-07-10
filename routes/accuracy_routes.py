@@ -40,9 +40,9 @@ def analyze_accuracy():
                 "error": f"Image validation failed: {resize_info['reason']}",
                 "details": {
                     "original_size": resize_info["original_size"],
-                    "min_size": 100,  # This should come from config
-                    "max_size": 2048,  # This should come from config
-                    "resize_allowed": True  # This should come from config
+                    "min_size": 100,
+"max_size": 2048,
+"resize_allowed": True
                 }
             }), 400
         

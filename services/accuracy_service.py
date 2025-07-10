@@ -44,7 +44,7 @@ def performAccuracyAnalysis(model_results, image_width, image_height):
         "recommendations": []
     }
     
-    # Analyze each detection
+    
     total_area_covered = 0
     class_data = {1: [], 2: [], 3: []}  # walls, windows, doors
     
@@ -53,19 +53,19 @@ def performAccuracyAnalysis(model_results, image_width, image_height):
         class_id = class_ids[i]
         confidence = float(scores[i])
         
-        # Calculate bbox area
+        
         y1, x1, y2, x2 = bbox
         bbox_area = (x2 - x1) * (y2 - y1)
         total_area_covered += bbox_area
         
-        # Store class-specific data
+        
         class_data[class_id].append({
             "confidence": confidence,
             "area": bbox_area,
             "bbox": [float(x1), float(y1), float(x2), float(y2)]
         })
         
-        # Categorize by confidence
+        
         detection_info = {
             "id": i,
             "type": getClassName(class_id),
@@ -81,11 +81,11 @@ def performAccuracyAnalysis(model_results, image_width, image_height):
         else:
             analysis["detection_quality"]["low_confidence"].append(detection_info)
     
-    # Calculate overall metrics
+    
     image_area = image_width * image_height
     analysis["overall_metrics"]["image_coverage"] = float(total_area_covered / image_area * 100)
     
-    # Analyze each object class
+    
     class_names = {1: "walls", 2: "windows", 3: "doors"}
     for class_id, class_name in class_names.items():
         if class_data[class_id]:
@@ -100,7 +100,7 @@ def performAccuracyAnalysis(model_results, image_width, image_height):
                 }
             }
     
-    # Check for overlapping bboxes (potential duplicates)
+    
     overlaps = 0
     for i in range(len(bboxes)):
         for j in range(i + 1, len(bboxes)):
@@ -109,7 +109,7 @@ def performAccuracyAnalysis(model_results, image_width, image_height):
     
     analysis["spatial_analysis"]["bbox_overlaps"] = overlaps
     
-    # Detect size anomalies
+    
     if class_data[1]:  # walls
         wall_areas = [d["area"] for d in class_data[1]]
         median_wall_area = numpy.median(wall_areas)
@@ -123,28 +123,28 @@ def performAccuracyAnalysis(model_results, image_width, image_height):
                     "reason": "unusually_large" if area > median_wall_area * 5 else "unusually_small"
                 })
     
-    # Calculate reliability score (0-100)
+    
     reliability_factors = []
     
-    # Factor 1: Average confidence (0-40 points)
+    
     avg_confidence = analysis["overall_metrics"]["average_confidence"]
     reliability_factors.append(min(40, avg_confidence * 40))
     
-    # Factor 2: High confidence detections ratio (0-30 points)
+    
     high_conf_ratio = len(analysis["detection_quality"]["high_confidence"]) / max(1, len(bboxes))
     reliability_factors.append(high_conf_ratio * 30)
     
-    # Factor 3: Penalize overlaps (0-20 points)
+    
     overlap_penalty = max(0, 20 - overlaps * 5)
     reliability_factors.append(overlap_penalty)
     
-    # Factor 4: Reasonable detection count (0-10 points)
+    
     detection_count_score = 10 if 1 <= len(bboxes) <= 50 else max(0, 10 - abs(len(bboxes) - 25))
     reliability_factors.append(detection_count_score)
     
     analysis["reliability_score"] = sum(reliability_factors)
     
-    # Generate recommendations
+    
     recommendations = []
     
     if avg_confidence < 0.6:

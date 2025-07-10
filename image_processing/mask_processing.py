@@ -84,7 +84,7 @@ def segment_individual_walls(wall_mask):
         # Improve skeleton quality for angled walls
         improved_mask = improve_mask_for_skeletonization(region_mask)
         skeleton = skeletonize(improved_mask)
-        skeleton = safe_logical_and(skeleton.astype(bool), region_mask.astype(bool))  # FIXED: explicit bool casting
+        skeleton = safe_logical_and(skeleton.astype(bool), region_mask.astype(bool))
         
         # Clean up skeleton to remove small artifacts
         skeleton = clean_skeleton(skeleton)
@@ -120,7 +120,7 @@ def validate_centerline_boundary(segment_coords, wall_mask):
         y, x = coord
         # Check if the point is within the wall mask
         if 0 <= y < wall_mask.shape[0] and 0 <= x < wall_mask.shape[1]:
-            if wall_mask[y, x].item():  # FIXED: removed numpy.any()
+            if wall_mask[y, x].item():
                 validated_coords.append(coord)
             else:
                 # If point is outside wall, try to find nearest valid point

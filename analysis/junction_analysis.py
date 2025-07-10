@@ -12,7 +12,7 @@ def find_junction_points(skeleton):
     # Check each point in skeleton with a more restrictive approach
     for y in range(2, h-2):  # Stay further from edges
         for x in range(2, w-2):
-            if skeleton[y, x]:  # FIXED: removed numpy.any()
+            if skeleton[y, x]:
                 # Count connected components in 3x3 neighborhood
                 # A true junction should connect 3 or more separate line segments
                 neighbors = skeleton[y-1:y+2, x-1:x+2].copy()
@@ -53,7 +53,7 @@ def find_junction_points_simple(skeleton):
     # Only check every 5th pixel to avoid noise
     for y in range(5, h-5, 5):
         for x in range(5, w-5, 5):
-            if cleaned_skeleton[y, x].item():   # FIXED: removed numpy.any()
+            if cleaned_skeleton[y, x].item():
                 # Check in a larger 5x5 neighborhood to be more stable
                 region = cleaned_skeleton[y-2:y+3, x-2:x+3]
                 
@@ -168,7 +168,7 @@ def extract_centerline_coords_with_validation(segment_coords, wall_mask, min_len
         bbox = None
     
     # Try the new centered straight centerline approach first
-    # Import locally to avoid circular import
+    
     from analysis.wall_analysis import calculate_centered_straight_centerline
     centerline = calculate_centered_straight_centerline(wall_mask, bbox)
     

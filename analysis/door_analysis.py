@@ -22,7 +22,7 @@ def analyzeDoorOrientation(door_mask, door_bbox, image_width, image_height):
         cv2.drawContours(edge_mask, [box_pts], -1, 255, 1)
         dist = cv2.distanceTransform(255-edge_mask, cv2.DIST_L2, 3)
         arc_pixels = safe_logical_and((dm > 0).astype(bool), (dist > 2).astype(bool))
-        # FIXED: Check for arc pixels properly
+        
         if numpy.count_nonzero(arc_pixels) == 0:
             raise ValueError("no arc")
         ys,xs = numpy.nonzero(arc_pixels)

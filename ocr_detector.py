@@ -451,12 +451,12 @@ class FloorPlanOCRDetector:
             logger.info("Running OCR with enhanced parameters...")
             try:
                 results = self.reader.readtext(image, 
-                                            width_ths=0.2,  # Even lower width threshold
-                                            height_ths=0.2,  # Even lower height threshold
+                                            width_ths=0.2,
+                                            height_ths=0.2,
                                             paragraph=False,  # Don't group into paragraphs
                                             detail=1)  # Return detailed results
                 for (bbox, text, confidence) in results:
-                    if text.strip() and confidence > 0.03:  # Very low threshold for small text
+                    if text.strip() and confidence > 0.03:
                         x_coords = [point[0] for point in bbox]
                         y_coords = [point[1] for point in bbox]
                         bbox_formatted = [int(min(x_coords)), int(min(y_coords)), int(max(x_coords)), int(max(y_coords))]
@@ -473,8 +473,8 @@ class FloorPlanOCRDetector:
             logger.info("Running OCR with aggressive settings for small text...")
             try:
                 results = self.reader.readtext(image, 
-                                            width_ths=0.05,  # Extremely low width threshold
-                                            height_ths=0.05,  # Extremely low height threshold
+                                            width_ths=0.05,
+                                            height_ths=0.05,
                                             paragraph=False,
                                             detail=1,
                                             min_size=3)  # Allow very small text

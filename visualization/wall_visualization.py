@@ -10,16 +10,16 @@ from analysis.wall_analysis import calculate_centered_straight_centerline
 def create_wall_visualization(original_image, model_results, wall_parameters, junction_analysis, image_width, image_height, scale_factor_mm_per_pixel=1.0, exterior_walls=None, space_names=None):
 	"""Create enhanced visualization with wall centerlines, junctions, parameters, and OCR-detected space names"""
 	
-	# Convert to RGB if needed
+
 	if original_image.mode != 'RGB':
 		vis_image = original_image.convert('RGB')
 	else:
 		vis_image = original_image.copy()
 	
-	# Create drawing context
+
 	draw = ImageDraw.Draw(vis_image)
 	
-	# Define colors
+
 	colors = {
 		1: (255, 0, 0),     # Wall - Red
 		2: (0, 255, 0),     # Window - Green  
@@ -32,7 +32,7 @@ def create_wall_visualization(original_image, model_results, wall_parameters, ju
 	
 	class_names = {1: 'Wall', 2: 'Window', 3: 'Door'}
 	
-	# First draw regular detection boxes
+
 	bboxes = model_results['rois']
 	class_ids = model_results['class_ids']
 	scores = model_results['scores']
@@ -55,27 +55,26 @@ def create_wall_visualization(original_image, model_results, wall_parameters, ju
 			door_mask = masks[:, :, i] if i < masks.shape[2] else None
 			orientation = analyzeDoorOrientation(door_mask, bbox, image_width, image_height)
 			
-			# Calculate door center
+	
 			center_x = (x1 + x2) / 2
 			center_y = (y1 + y2) / 2
 			
-			# Draw door centerpoint (cyan circle)
+	
 			center_radius = 4
 			draw.ellipse([center_x - center_radius, center_y - center_radius, 
 						 center_x + center_radius, center_y + center_radius], 
 						fill=(0, 255, 255), outline=(0, 0, 0), width=2)
 			
-			# Yellow arrow drawing disabled as per user request
 			pass
 		
 		# Enhanced window visualization with centerpoint
 		if class_id == 2:  # window
-			# Calculate window center
+	
 			center_x = (x1 + x2) / 2
 			center_y = (y1 + y2) / 2
 		
 			
-			# Draw window centerpoint (orange circle)
+	
 			center_radius = 6
 			draw.ellipse([center_x - center_radius, center_y - center_radius, 
 						 center_x + center_radius, center_y + center_radius], 
@@ -92,18 +91,18 @@ def create_wall_visualization(original_image, model_results, wall_parameters, ju
 		else:
 			label = f"{class_names.get(class_id, 'Unknown')} ({confidence:.2f})"
 		
-		# Try to load a font, fall back to default if not available
+
 		try:
 			font = ImageFont.truetype("/System/Library/Fonts/Arial.ttf", 12)
 		except:
 			font = ImageFont.load_default()
 		
-		# Calculate text size and position
+
 		text_bbox = draw.textbbox((0, 0), label, font=font)
 		text_width = text_bbox[2] - text_bbox[0]
 		text_height = text_bbox[3] - text_bbox[1]
 		
-		# Position label above the bounding box
+
 		text_x = x1
 		text_y = max(0, y1 - text_height - 5)
 		
@@ -114,7 +113,7 @@ def create_wall_visualization(original_image, model_results, wall_parameters, ju
 		# Draw text
 		draw.text((text_x, text_y), label, fill=(255, 255, 255), font=font)
 	
-	# Draw wall centerlines and track which walls already have centerlines
+
 	# Pre-compute door bounding boxes once (x1,y1,x2,y2)
 	door_boxes_xy = []
 	for idx, cid in enumerate(class_ids):
@@ -129,7 +128,7 @@ def create_wall_visualization(original_image, model_results, wall_parameters, ju
 	if exterior_walls:
 		exterior_wall_ids = {wall["wall_id"] for wall in exterior_walls}
 
-	# Track which wall bounding boxes already have centerlines drawn
+
 	walls_with_centerlines = set()
 
 	for wall in wall_parameters:
@@ -163,7 +162,7 @@ def create_wall_visualization(original_image, model_results, wall_parameters, ju
 		# Only draw interior wall centerlines (yellow), not exterior (orange)
 		is_exterior = wall["wall_id"] in exterior_wall_ids
 		if is_exterior:
-			continue  # REMOVE drawing of exterior wall centerlines
+			continue
 		# Filter: Only draw wall if centerline is long enough and not degenerate
 		if len(centerline) > 1:
 			total_length = 0
@@ -205,9 +204,9 @@ def create_wall_visualization(original_image, model_results, wall_parameters, ju
 			x2w_px = mm_to_pixels(x2w, scale_factor_mm_per_pixel)
 			y2w_px = mm_to_pixels(y2w, scale_factor_mm_per_pixel)
 			walls_with_centerlines.add((int(x1w_px), int(y1w_px), int(x2w_px), int(y2w_px)))
-		# Wall ID drawing is temporarily disabled as per user request
+
 	
-	# Draw junctions
+
 	for junction in junction_analysis:
 		# Convert millimeter position back to pixels for visualization
 		pos_mm = junction["position"]
@@ -243,7 +242,7 @@ def create_wall_visualization(original_image, model_results, wall_parameters, ju
 		# Draw junction ID text
 		draw.text((text_x, text_y), junction_id, fill=text_color, font=font)
 	
-	# Add legend
+
 	legend_y = 10
 	legend_items = [
 		("Walls (Red boxes)", (255, 0, 0)),
@@ -385,14 +384,7 @@ def create_wall_visualization(original_image, model_results, wall_parameters, ju
 					draw.line([seg_start, seg_end], fill=centerline_color, width=4)
 				walls_with_centerlines.add(wall_bbox)  # Mark as having centerline
 	
-	# ----------------------
-	# Final fallback centerlines (only for walls without any centerlines)
-	# This section is now disabled since the improved fallback above handles everything
-	# ----------------------
 	
-	# This section is commented out to avoid duplicate centerlines
-	# The improved fallback above now handles both skeleton-based and simple fallback centerlines
-
 	# Draw OCR-detected space names
 	if space_names:
 		print(f"Drawing {len(space_names)} detected space names on visualization")

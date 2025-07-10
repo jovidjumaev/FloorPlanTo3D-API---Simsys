@@ -12,12 +12,12 @@ def line_intersects_rectangle(x1, y1, x2, y2, rect_x1, rect_y1, rect_x2, rect_y2
     Returns:
         True if the line intersects the rectangle, False otherwise
     """
-    # First check if either endpoint is inside the rectangle
+    
     if ((rect_x1 <= x1 <= rect_x2 and rect_y1 <= y1 <= rect_y2) or
         (rect_x1 <= x2 <= rect_x2 and rect_y1 <= y2 <= rect_y2)):
         return True
     
-    # Check if line intersects any of the four rectangle edges
+    
     # Top edge
     if line_segments_intersect(x1, y1, x2, y2, rect_x1, rect_y1, rect_x2, rect_y1):
         return True
@@ -44,7 +44,7 @@ def line_segments_intersect(x1, y1, x2, y2, x3, y3, x4, y4):
     Returns:
         True if the line segments intersect, False otherwise
     """
-    # Calculate direction vectors
+    
     denom = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4)
     
     if abs(denom) < 1e-10:  # Lines are parallel
@@ -69,11 +69,11 @@ def split_line_around_windows(x1, y1, x2, y2, bboxes, class_ids):
     Returns:
         List of line segments [(start_point, end_point), ...] that don't cross windows
     """
-    # Start with the original line segment
+    
     segments_to_process = [((x1, y1), (x2, y2))]
     final_segments = []
     
-    # Get all window bounding boxes with margin
+    
     window_rects = []
     for idx, cid in enumerate(class_ids):
         if cid == 2:  # window
@@ -86,19 +86,19 @@ def split_line_around_windows(x1, y1, x2, y2, bboxes, class_ids):
             wy2 += margin
             window_rects.append((wx1, wy1, wx2, wy2))
     
-    # Process each line segment against all windows
+    
     for seg_start, seg_end in segments_to_process:
         sx, sy = seg_start
         ex, ey = seg_end
         
-        # Check if this segment intersects any window
+        
         intersects_window = False
         
         for wx1, wy1, wx2, wy2 in window_rects:
-            # Check if line crosses window or has significant overlap
+            
             line_crosses = line_intersects_rectangle(sx, sy, ex, ey, wx1, wy1, wx2, wy2)
             
-            # Check endpoint containment for short segments or if endpoints are very close to window
+            
             segment_length = ((ex - sx) ** 2 + (ey - sy) ** 2) ** 0.5
             if segment_length < 15:  # Slightly increased from 10 to 15
                 start_inside = (wx1 <= sx <= wx2 and wy1 <= sy <= wy2)
@@ -106,7 +106,7 @@ def split_line_around_windows(x1, y1, x2, y2, bboxes, class_ids):
                 if start_inside or end_inside:
                     line_crosses = True
             
-            # Additional check: if either endpoint is very close to window edge (within 2 pixels)
+            
             else:
                 close_margin = 2
                 start_very_close = (wx1 - close_margin <= sx <= wx2 + close_margin and 
@@ -118,12 +118,12 @@ def split_line_around_windows(x1, y1, x2, y2, bboxes, class_ids):
             
             if line_crosses:
                 intersects_window = True
-                # Split the line at the window boundaries
+                
                 split_segments = split_line_at_rectangle(sx, sy, ex, ey, wx1, wy1, wx2, wy2)
                 final_segments.extend(split_segments)
                 break
         
-        # If no intersection with any window, keep the original segment
+        
         if not intersects_window:
             final_segments.append((seg_start, seg_end))
     
@@ -298,7 +298,7 @@ def find_nearest_valid_point(x, y, wall_mask, max_search_radius=5):
                 if abs(dx) == radius or abs(dy) == radius:
                     new_y, new_x = y + dy, x + dx
                     if (0 <= new_y < height and 0 <= new_x < width and 
-     			        bool(wall_mask[new_y, new_x].item())): # FIXED: removed numpy.any()
+     			        bool(wall_mask[new_y, new_x].item())):
                         return (new_y, new_x)
     
     return None

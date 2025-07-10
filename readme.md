@@ -1,4 +1,4 @@
-# Enhanced FloorPlanTo3D API with Advanced Analysis
+# FloorPlanTo3D API with Wall Analysis
 
 ## Credits
 

@@ -26,7 +26,7 @@ class PredictionConfig(Config):
     # simplify GPU config
     GPU_COUNT = app_config.GPU_COUNT
     IMAGES_PER_GPU = app_config.IMAGES_PER_GPU
-    # Lower detection threshold to capture faint walls/doors
+    
     DETECTION_MIN_CONFIDENCE = app_config.DETECTION_MIN_CONFIDENCE
     # Allow larger input images to preserve line detail
     IMAGE_MAX_DIM = app_config.IMAGE_MAX_DIM
