@@ -84,7 +84,7 @@ from services.accuracy_service import performAccuracyAnalysis
 from routes.health_routes import bp as health_bp
 from routes.accuracy_routes import bp as accuracy_bp
 from routes.visualization_routes import bp as visualization_bp
-
+   
 # Configure logging
 logging.basicConfig(
 	level=getattr(logging, app_config.LOG_LEVEL),
@@ -117,13 +117,16 @@ except Exception as e:
 
 
 if __name__ == '__main__':
-	api_config = app_config.get_api_config()
-	logger.info('===========Starting FloorPlanTo3D API==========')
-	logger.info(f"Running on {api_config['HOST']}:{api_config['PORT']}")
-	logger.info(f"Debug mode: {api_config['DEBUG']}")
-	application.run(
-		host=api_config['HOST'], 
-		port=api_config['PORT'],
-		debug=api_config['DEBUG']
-	)
-	logger.info('===========API stopped==========')
+    api_config = app_config.get_api_config()
+    logger.info('===========Starting FloorPlanTo3D API==========')
+    logger.info(f"Running on {api_config['HOST']}:{api_config['PORT']}")
+    logger.info(f"Debug mode: {api_config['DEBUG']}")
+    try:
+        application.run(
+            host=api_config['HOST'],
+            port=api_config['PORT'],
+            debug=api_config['DEBUG']
+        )
+    except Exception as e:
+        logger.error(f"Failed to start application: {str(e)}")
+    logger.info('===========API stopped==========')

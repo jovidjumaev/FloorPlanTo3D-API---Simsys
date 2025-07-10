@@ -51,8 +51,8 @@ logger = logging.getLogger(__name__)
 bp = Blueprint('visualization', __name__)
 
 
-@bp.route('/visualize_walls', methods=['POST'])
-def visualize_wall_analysis():
+@bp.route('/analyze', methods=['POST'])
+def analyze_floor_plan():
     """Create enhanced visualization showing wall centerlines, junctions, and wall parameters"""
     
     # Check if model is initialized
@@ -399,14 +399,6 @@ def visualize_wall_analysis():
                     "total_length_mm": sum(w["length"] for w in wall_parameters),
                     "average_thickness_mm": sum(w["thickness"]["average"] for w in wall_parameters) / len(wall_parameters) if wall_parameters else 0
                 },
-                "exterior_walls": {
-                    "total_exterior_walls": len(exterior_walls),
-                    "total_interior_walls": len(interior_walls),
-                    "perimeter_length_mm": perimeter_dimensions["total_perimeter_length"],
-                    "perimeter_area_mm2": perimeter_dimensions["perimeter_area"],
-                    "average_exterior_wall_length_mm": perimeter_dimensions["average_exterior_wall_length"],
-                    "boundary_coverage": perimeter_dimensions["boundary_coverage"]
-                },
                 "doors": {
                     "total_doors": len(detailed_doors),
                     "average_confidence": float(numpy.mean([d["confidence"] for d in detailed_doors])) if detailed_doors else 0,
@@ -433,10 +425,7 @@ def visualize_wall_analysis():
             },
             "walls": {
                 "individual_walls": wall_parameters,
-                "junctions": junction_analysis,
-                "exterior_walls": exterior_walls,
-                "interior_walls": interior_walls,
-                "perimeter_analysis": perimeter_dimensions
+                "junctions": junction_analysis
             },
             "doors": {
                 "detailed_doors": detailed_doors
@@ -503,8 +492,6 @@ def visualize_wall_analysis():
             "total_space_names": len(space_names),
             "comprehensive_summary": {
                 "wall_count": len(wall_parameters),
-                "exterior_wall_count": len(exterior_walls),
-                "interior_wall_count": len(interior_walls),
                 "door_count": len(detailed_doors),
                 "window_count": len(detailed_windows),
                 "junction_count": len(junction_analysis),

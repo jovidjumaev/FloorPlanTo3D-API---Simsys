@@ -52,7 +52,7 @@ This project is based on the original [FloorPlanTo3D-API](https://github.com/fad
 curl -X POST \
   -F "image=@your_image.png" \
   -F "scale_factor_mm_per_pixel=0.2645833333" \
-  http://localhost:8080/visualize_walls
+  http://localhost:8080/analyze
 ```
 
 ### Accuracy Assessment
