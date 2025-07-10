@@ -12,7 +12,20 @@ This project is based on the original [FloorPlanTo3D-API](https://github.com/fad
 - **OCR Space Detection**: Multi-language text recognition with deduplication
 - **Real-world Measurements**: Millimeter conversion from pixel coordinates
 - **Enhanced Visualization**: Floor plan overlays with analysis results
-- **Organized Output**: Structured file system (outputs/images/, outputs/json/)
+- **Modular Architecture**: Clean, maintainable codebase with separated concerns
+
+## Project Structure
+
+```
+├── models/           # Model configuration and initialization
+├── services/         # Business logic (validation, analysis, JSON building)
+├── routes/           # API endpoints organized as Flask blueprints
+├── analysis/         # Floor plan analysis algorithms
+├── image_processing/ # Image loading and processing
+├── visualization/    # Visualization generation
+├── config/          # Configuration management
+└── utils/           # Utility functions
+```
 
 ## Installation
 
@@ -47,6 +60,11 @@ curl -X POST \
 curl -X POST \
   -F "image=@your_image.png" \
   http://localhost:8080/analyze_accuracy
+```
+
+### Health Check
+```bash
+curl http://localhost:8080/health
 ```
 
 ## Scale Factor Calculation
@@ -92,3 +110,4 @@ outputs/
 - Processing time: 15-30 seconds depending on image complexity
 - OCR supports English and Korean text
 - Higher resolution images provide better accuracy
+- Modular architecture enables easy maintenance and feature additions
