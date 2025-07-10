@@ -1,12 +1,37 @@
 import os
+import sys
+import time
+import json
+import traceback
+import logging
+from datetime import datetime
+
+# Third-party imports
 import numpy
-import skimage.color
 import cv2
-import traceback 
+import tensorflow as tf
+from PIL import Image
+
+# Flask and web framework imports
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+
+# Machine learning and image processing imports
+from mrcnn.config import Config
+from mrcnn.model import MaskRCNN, mold_image
+from numpy import expand_dims
+
+# Image processing libraries
+import skimage.color
+
+# Local imports
 from config.constants import *
+from config.settings import get_config
 
-# Enhanced Flask API for floor plan analysis
+# Get application configuration
+app_config = get_config()
 
+# Utility imports
 from utils.geometry import (
 	line_intersects_rectangle, line_segments_intersect,
 	split_line_around_windows, calculateOverlap, safe_logical_or, safe_logical_and)
@@ -46,109 +71,178 @@ from analysis.window_analysis import (
 
 from visualization.wall_visualization import create_wall_visualization
 
+# Import OCR detector
+from ocr_detector import detect_space_names
 
-
-import logging
-   
 # Configure logging
 logging.basicConfig(
-	level=logging.INFO,
-	format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+	level=getattr(logging, app_config.LOG_LEVEL),
+	format=app_config.LOG_FORMAT)
 logger = logging.getLogger(__name__)
 
-
-
-
-from numpy import zeros
-from numpy import asarray
-
-from mrcnn.config import Config
-from mrcnn.model import MaskRCNN
-from mrcnn.model import mold_image
-
-from skimage.draw import polygon2mask
-from skimage.io import imread
-from skimage.morphology import skeletonize, remove_small_objects, label, binary_erosion, disk
-from skimage.measure import find_contours, regionprops
-from scipy.ndimage import distance_transform_edt
-from scipy.spatial.distance import pdist, squareform
-
-from datetime import datetime
-from io import BytesIO
-from mrcnn.utils import extract_bboxes
-from numpy import expand_dims
-from matplotlib import pyplot
-from matplotlib.patches import Rectangle
-
-import json
-import os
-from datetime import datetime
-from flask import Flask, flash, request, jsonify, redirect, url_for
-from werkzeug.utils import secure_filename
-
-import tensorflow as tf
-import sys
-from PIL import Image, ImageDraw, ImageFont
-import numpy as np
-from skimage.draw import line as skimage_line
-import time
-
-# Import OCR detector
-from ocr_detector import detect_space_names, detect_text_in_region
+# Optional memory monitoring
+try:
+    import psutil
+    import gc
+    MEMORY_MONITORING_AVAILABLE = True
+except ImportError:
+    MEMORY_MONITORING_AVAILABLE = False
+    logger.warning("psutil not available - memory monitoring disabled")
 
 # Global variables
 global _model
 global cfg
 ROOT_DIR = os.path.abspath("./")
-WEIGHTS_FOLDER = "./weights"
 
-from flask_cors import CORS, cross_origin
-
+# Add root directory to path
 sys.path.append(ROOT_DIR)
 
-MODEL_NAME = "mask_rcnn_hq"
-WEIGHTS_FILE_NAME = 'maskrcnn_15_epochs.h5'
-
+# Initialize Flask application
 application = Flask(__name__)
-cors = CORS(application, resources={r"/*": {"origins": "*"}})
+application.debug = app_config.DEBUG
+cors = CORS(application, resources={r"/*": {"origins": app_config.CORS_ORIGINS}})
 
 
 class PredictionConfig(Config):
+	"""MaskRCNN model configuration"""
 	# define the name of the configuration
-	NAME = "floorPlan_cfg"
+	NAME = app_config.MODEL_NAME
 	# number of classes (background + door + wall + window)
-	NUM_CLASSES = 1 + 3
+	NUM_CLASSES = app_config.NUM_CLASSES
 	# simplify GPU config
-	GPU_COUNT = 1
-	IMAGES_PER_GPU = 1
+	GPU_COUNT = app_config.GPU_COUNT
+	IMAGES_PER_GPU = app_config.IMAGES_PER_GPU
 	# Lower detection threshold to capture faint walls/doors
-	DETECTION_MIN_CONFIDENCE = 0.15
+	DETECTION_MIN_CONFIDENCE = app_config.DETECTION_MIN_CONFIDENCE
 	# Allow larger input images to preserve line detail
-	IMAGE_MAX_DIM = 1600
+	IMAGE_MAX_DIM = app_config.IMAGE_MAX_DIM
 
 
-	
-
-# Load model on startup (Flask 2.x compatible way)
-@application.before_request
-def load_model():
+def initialize_model():
+	"""Initialize the MaskRCNN model once at startup"""
 	global cfg, _model
 	
-	# Only load once
-	if '_model' not in globals() or _model is None:
+	try:
 		model_folder_path = os.path.abspath("./") + "/mrcnn"
-		weights_path = os.path.join(WEIGHTS_FOLDER, WEIGHTS_FILE_NAME)
+		weights_path = os.path.join(app_config.WEIGHTS_FOLDER, app_config.WEIGHTS_FILE_NAME)
+		
+		# Check if weights file exists
+		if not os.path.exists(weights_path):
+			raise FileNotFoundError(f"Weights file not found: {weights_path}")
+		
 		cfg = PredictionConfig()
-		print(cfg.IMAGE_RESIZE_MODE)
-		print('==============before loading model=========')
+		logger.info(f"Model configuration: {cfg.IMAGE_RESIZE_MODE}")
+		logger.info('==============Initializing model=========')
+		
 		_model = MaskRCNN(mode='inference', model_dir=model_folder_path, config=cfg)
-		print('=================after loading model==============')
+		logger.info('=================Model created==============')
+		
 		_model.load_weights(weights_path, by_name=True)
-		print('=================model loaded successfully==============')
+		logger.info('=================Model loaded successfully==============')
+		
+		return _model, cfg
+		
+	except Exception as e:
+		logger.error(f"Error initializing model: {str(e)}")
+		raise e
 
 
+# Initialize model at startup
+logger.info("Starting model initialization...")
+try:
+    _model, cfg = initialize_model()
+    logger.info("Model initialization completed successfully!")
+except Exception as e:
+    logger.error(f"Failed to initialize model: {str(e)}")
+    _model = None
+    cfg = None
 
 
+def check_memory_usage():
+    """Monitor memory usage and warn if high"""
+    if not MEMORY_MONITORING_AVAILABLE or not app_config.ENABLE_MEMORY_MONITORING:
+        return 0
+    
+    try:
+        process = psutil.Process()
+        memory_mb = process.memory_info().rss / 1024 / 1024
+        
+        if memory_mb > app_config.MAX_MEMORY_USAGE_MB:
+            logger.warning(f"High memory usage: {memory_mb:.1f}MB")
+            gc.collect()  # Force garbage collection
+        
+        return memory_mb
+    except Exception as e:
+        logger.warning(f"Could not check memory usage: {e}")
+        return 0
+
+
+def validate_and_resize_image(image, max_size=None):
+    """
+    Validate image size and resize if necessary
+    
+    Args:
+        image: PIL Image object
+        max_size: Maximum dimension (width or height), defaults to config
+    
+    Returns:
+        PIL Image: Original or resized image
+        dict: Information about the resize operation
+    """
+    if max_size is None:
+        max_size = app_config.MAX_IMAGE_SIZE
+    
+    original_size = image.size
+    max_dimension = max(original_size)
+    min_dimension = min(original_size)
+    
+    resize_info = {
+        "original_size": original_size,
+        "resized": False,
+        "resize_factor": 1.0,
+        "reason": "no_resize_needed"
+    }
+    
+    # Check minimum size
+    if min_dimension < app_config.MIN_IMAGE_SIZE:
+        resize_info["reason"] = "image_too_small"
+        logger.warning(f"Image too small: {original_size} (min: {app_config.MIN_IMAGE_SIZE})")
+        return image, resize_info
+    
+    # Check maximum size
+    if max_dimension > max_size and app_config.ALLOW_IMAGE_RESIZE:
+        # Calculate resize factor
+        resize_factor = max_size / max_dimension
+        
+        # Calculate new size maintaining aspect ratio
+        new_width = int(original_size[0] * resize_factor)
+        new_height = int(original_size[1] * resize_factor)
+        new_size = (new_width, new_height)
+        
+        # Ensure minimum size after resize
+        if min(new_size) < app_config.MIN_IMAGE_SIZE:
+            logger.warning(f"Resize would make image too small: {new_size}")
+            resize_info["reason"] = "resize_would_make_too_small"
+            return image, resize_info
+        
+        # Resize image using high-quality method
+        resize_method = getattr(Image, app_config.RESIZE_QUALITY, Image.LANCZOS)
+        image = image.resize(new_size, resize_method)
+        
+        resize_info.update({
+            "resized": True,
+            "resize_factor": resize_factor,
+            "new_size": new_size,
+            "reason": "resized_for_performance"
+        })
+        
+        logger.info(f"Image resized from {original_size} to {new_size} (factor: {resize_factor:.2f})")
+    
+    elif max_dimension > max_size and not app_config.ALLOW_IMAGE_RESIZE:
+        resize_info["reason"] = "image_too_large_resize_disabled"
+        logger.warning(f"Image too large: {original_size} (max: {max_size}) but resize is disabled")
+    
+    return image, resize_info
 
 
 def buildEnhancedJson(model_results, image_width, image_height, original_image):
@@ -275,22 +369,72 @@ def buildEnhancedJson(model_results, image_width, image_height, original_image):
 	return enhanced_json
 
 
-
-
-
-
-
+@application.route('/health', methods=['GET'])
+def health_check():
+	"""Health check endpoint to verify model status"""
+	try:
+		if _model is None or cfg is None:
+			return jsonify({
+				"status": "error",
+				"message": "Model not initialized",
+				"model_loaded": False
+			}), 503
+		
+		return jsonify({
+			"status": "healthy",
+			"message": "Model loaded and ready",
+			"model_loaded": True,
+			"model_config": {
+				"name": cfg.NAME,
+				"num_classes": cfg.NUM_CLASSES,
+				"detection_min_confidence": cfg.DETECTION_MIN_CONFIDENCE,
+				"image_max_dim": cfg.IMAGE_MAX_DIM
+			}
+		}), 200
+	except Exception as e:
+		return jsonify({
+			"status": "error",
+			"message": f"Health check failed: {str(e)}",
+			"model_loaded": False
+		}), 500
 
 
 @application.route('/analyze_accuracy', methods=['POST'])
 def analyze_accuracy():
 	"""Analyze the accuracy and reliability of the model predictions"""
-	global cfg, _model
+	
+	# Check if model is initialized
+	if _model is None or cfg is None:
+		return jsonify({"error": "Model not initialized. Please check server logs."}), 503
 	
 	try:
 		imagefile = Image.open(request.files['image'].stream)
+		
+		# Validate and resize image
+		imagefile, resize_info = validate_and_resize_image(imagefile)
+		
+		# Check if image validation failed
+		if resize_info["reason"] in ["image_too_small", "resize_would_make_too_small", "image_too_large_resize_disabled"]:
+			return jsonify({
+				"error": f"Image validation failed: {resize_info['reason']}",
+				"details": {
+					"original_size": resize_info["original_size"],
+					"min_size": app_config.MIN_IMAGE_SIZE,
+					"max_size": app_config.MAX_IMAGE_SIZE,
+					"resize_allowed": app_config.ALLOW_IMAGE_RESIZE
+				}
+			}), 400
+		
+		# Check memory usage before processing
+		memory_before = check_memory_usage()
+		logger.debug(f"Memory before processing: {memory_before:.1f}MB")
+		
 		image, w, h = myImageLoader(imagefile)
-		print(f"Analyzing accuracy for image: {h}x{w}")
+		logger.info(f"Analyzing accuracy for image: {h}x{w}")
+		
+		# Log resize information if image was resized
+		if resize_info["resized"]:
+			logger.info(f"Image was resized: {resize_info['original_size']} -> {resize_info['new_size']}")
 		
 		scaled_image = mold_image(image, cfg)
 		sample = expand_dims(scaled_image, 0)
@@ -305,14 +449,30 @@ def analyze_accuracy():
 		test_num = getNextTestNumber()
 		filename = saveAccuracyAnalysis(accuracy_report, test_num)
 		
-		# Add filename to response
+		# Check memory usage after processing
+		memory_after = check_memory_usage()
+		logger.debug(f"Memory after processing: {memory_after:.1f}MB")
+		
+		# Add filename and image processing info to response
 		response = accuracy_report.copy()
 		response["analysis_file"] = filename
+		response["image_processing"] = {
+			"original_size": resize_info["original_size"],
+			"processed_size": resize_info.get("new_size", resize_info["original_size"]),
+			"resized": resize_info["resized"],
+			"resize_factor": resize_info["resize_factor"],
+			"resize_reason": resize_info["reason"]
+		}
+		response["memory_usage"] = {
+			"before_processing_mb": memory_before,
+			"after_processing_mb": memory_after,
+			"memory_increase_mb": memory_after - memory_before
+		}
 		
 		return jsonify(response)
 		
 	except Exception as e:
-		print(f"Error in accuracy analysis: {str(e)}")
+		logger.error(f"Error in accuracy analysis: {str(e)}")
 		return jsonify({"error": str(e)}), 500
 
 def performAccuracyAnalysis(model_results, image_width, image_height):
@@ -485,13 +645,44 @@ def performAccuracyAnalysis(model_results, image_width, image_height):
 @application.route('/visualize_walls', methods=['POST'])
 def visualize_wall_analysis():
 	"""Create enhanced visualization showing wall centerlines, junctions, and wall parameters"""
-	global cfg, _model
+	
+	# Check if model is initialized
+	if _model is None or cfg is None:
+		return jsonify({"error": "Model not initialized. Please check server logs."}), 503
 	
 	try:
 		imagefile = Image.open(request.files['image'].stream)
+		
 		# Get scale factor from request (default to 1.0 if not provided)
 		scale_factor_mm_per_pixel = float(request.form.get('scale_factor_mm_per_pixel', 1.0))
+		
+		# Validate and resize image
+		imagefile, resize_info = validate_and_resize_image(imagefile)
+		
+		# Check if image validation failed
+		if resize_info["reason"] in ["image_too_small", "resize_would_make_too_small", "image_too_large_resize_disabled"]:
+			return jsonify({
+				"error": f"Image validation failed: {resize_info['reason']}",
+				"details": {
+					"original_size": resize_info["original_size"],
+					"min_size": app_config.MIN_IMAGE_SIZE,
+					"max_size": app_config.MAX_IMAGE_SIZE,
+					"resize_allowed": app_config.ALLOW_IMAGE_RESIZE
+				}
+			}), 400
+		
+		# Check memory usage before processing
+		memory_before = check_memory_usage()
+		logger.debug(f"Memory before processing: {memory_before:.1f}MB")
+		
+		# Adjust scale factor if image was resized
+		if resize_info["resized"]:
+			original_scale = scale_factor_mm_per_pixel
+			scale_factor_mm_per_pixel *= resize_info["resize_factor"]
+			logger.info(f"Adjusted scale factor from {original_scale:.4f} to {scale_factor_mm_per_pixel:.4f} due to image resize")
+		
 		original_image = imagefile.copy()
+		
 		# Office plan detection
 		img_rgb_tmp2 = original_image.convert('RGB')
 		gray_tmp = cv2.cvtColor(numpy.array(img_rgb_tmp2), cv2.COLOR_RGB2GRAY)
@@ -500,14 +691,18 @@ def visualize_wall_analysis():
 		avg_row = numpy.mean(numpy.sum(edges_tmp > 0, axis=1))
 		is_office_plan = max(avg_col, avg_row) < 7
 		image, w, h = myImageLoader(imagefile, enhance_for_office=is_office_plan)
-		print(f"Creating wall analysis visualization for image: {h}x{w} {'(office plan)' if is_office_plan else ''}")
+		logger.info(f"Creating wall analysis visualization for image: {h}x{w} {'(office plan)' if is_office_plan else ''}")
+		
+		# Log resize information if image was resized
+		if resize_info["resized"]:
+			logger.info(f"Image was resized: {resize_info['original_size']} -> {resize_info['new_size']}")
 		
 		# --- timing start ---
 		t0 = time.time()
 		# Preprocess for model
 		scaled_image = mold_image(image, cfg)
 		sample = expand_dims(scaled_image, 0)
-		print(f"Time - preprocessing: {time.time()-t0:.2f}s")
+		logger.debug(f"Time - preprocessing: {time.time()-t0:.2f}s")
 		
 		# Model detection
 		t0 = time.time()
@@ -516,7 +711,7 @@ def visualize_wall_analysis():
 		# Extract wall masks and perform analysis
 		t0 = time.time()
 		wall_masks, wall_indices = extract_wall_masks(r)
-		print(f"Extracted {len(wall_masks)} wall masks from model output")
+		logger.info(f"Extracted {len(wall_masks)} wall masks from model output")
 		combined_wall_mask = numpy.zeros((h, w), dtype=bool)
 		for mask in wall_masks:
 			combined_wall_mask = safe_logical_or(combined_wall_mask.astype(bool), mask.astype(bool))
@@ -572,24 +767,24 @@ def visualize_wall_analysis():
 		# Remove door and window areas from combined wall mask
 		combined_wall_mask = safe_logical_and(combined_wall_mask.astype(bool), numpy.logical_not(combined_door_mask.astype(bool)))
 		combined_wall_mask = safe_logical_and(combined_wall_mask.astype(bool), numpy.logical_not(combined_window_mask.astype(bool)))
-		print("Combined wall mask ready; starting skeletonisation & segment extraction …")
+		logger.info("Combined wall mask ready; starting skeletonisation & segment extraction …")
 		wall_segments, junctions = segment_individual_walls(combined_wall_mask)
-		print(f"Found {len(wall_segments)} wall segments and {len(junctions)} raw junctions")
+		logger.info(f"Found {len(wall_segments)} wall segments and {len(junctions)} raw junctions")
 		wall_parameters = extract_wall_parameters(wall_segments, combined_wall_mask, junctions, scale_factor_mm_per_pixel)
-		print(f"Computed parameters for {len(wall_parameters)} walls")
+		logger.info(f"Computed parameters for {len(wall_parameters)} walls")
 		wall_connections_viz = find_wall_connections(wall_segments, junctions)
 		junction_analysis = analyze_junction_types(junctions, wall_connections_viz)
 		
 		# Convert junction positions to millimeters
 		for junction in junction_analysis:
 			junction.update(convert_junction_position_to_mm(junction, scale_factor_mm_per_pixel))
-		print(f"Final junction list contains {len(junction_analysis)} junctions")
+		logger.info(f"Final junction list contains {len(junction_analysis)} junctions")
 		
 		# Identify exterior walls and calculate perimeter dimensions
 		exterior_walls, interior_walls = identify_exterior_walls(wall_parameters, w, h, scale_factor_mm_per_pixel)
 		perimeter_dimensions = calculate_perimeter_dimensions(exterior_walls)
-		print(f"Identified {len(exterior_walls)} exterior walls and {len(interior_walls)} interior walls")
-		print(f"Time - wall segmentation & analysis: {time.time()-t0:.2f}s")
+		logger.info(f"Identified {len(exterior_walls)} exterior walls and {len(interior_walls)} interior walls")
+		logger.debug(f"Time - wall segmentation & analysis: {time.time()-t0:.2f}s")
 		
 		# Fallback junctions from wall bounding boxes if none detected (or very few)
 		if len(junction_analysis) < 4:  # heuristic: expect at least the four outer corners
@@ -673,8 +868,8 @@ def visualize_wall_analysis():
 				}
 				detailed_doors.append(door_data)
 			
-			print(f"Analyzed {len(detailed_doors)} doors")
-		print(f"Time - door analysis: {time.time()-t0:.2f}s")
+			logger.info(f"Analyzed {len(detailed_doors)} doors")
+		logger.debug(f"Time - door analysis: {time.time()-t0:.2f}s")
 		
 		# Extract and analyze windows
 		t0 = time.time()
@@ -737,12 +932,12 @@ def visualize_wall_analysis():
 				}
 				detailed_windows.append(window_data)
 			
-			print(f"Analyzed {len(detailed_windows)} windows")
-		print(f"Time - window analysis: {time.time()-t0:.2f}s")
+			logger.info(f"Analyzed {len(detailed_windows)} windows")
+		logger.debug(f"Time - window analysis: {time.time()-t0:.2f}s")
 		
 		# Perform OCR detection for space names
 		t0 = time.time()
-		print("Starting OCR detection for space names...")
+		logger.info("Starting OCR detection for space names...")
 		space_names = detect_space_names(numpy.array(original_image))
 		
 		# Convert space name coordinates to millimeters
@@ -761,13 +956,13 @@ def visualize_wall_analysis():
 				'y2': float(pixels_to_mm(space['bbox'][3], scale_factor_mm_per_pixel))
 			}
 		
-		print(f"OCR detected {len(space_names)} space names in {time.time()-t0:.2f}s")
+		logger.info(f"OCR detected {len(space_names)} space names in {time.time()-t0:.2f}s")
 		
 		# Create enhanced visualization
 		t0 = time.time()
 		vis_image = create_wall_visualization(original_image, r, wall_parameters, junction_analysis, w, h, scale_factor_mm_per_pixel, exterior_walls, space_names)
-		print(f"Time - visualization drawing: {time.time()-t0:.2f}s")
-		print("Visualization image drawn; saving files …")
+		logger.debug(f"Time - visualization drawing: {time.time()-t0:.2f}s")
+		logger.info("Visualization image drawn; saving files …")
 		
 		# Get next test number for naming
 		test_num = getNextTestNumber()
@@ -867,10 +1062,29 @@ def visualize_wall_analysis():
 		wall_json_filename = f"final{test_num}.json"
 		save_wall_analysis(wall_analysis, wall_json_filename)
 		
+		# Check memory usage after processing
+		memory_after = check_memory_usage()
+		logger.debug(f"Memory after processing: {memory_after:.1f}MB")
+		
 		return jsonify({
 			"message": "Comprehensive floor plan analysis completed successfully",
 			"visualization_file": wall_vis_filename,
 			"analysis_file": wall_json_filename,
+			"image_processing": {
+				"original_size": resize_info["original_size"],
+				"processed_size": resize_info.get("new_size", resize_info["original_size"]),
+				"resized": resize_info["resized"],
+				"resize_factor": resize_info["resize_factor"],
+				"resize_reason": resize_info["reason"],
+				"scale_factor_adjusted": resize_info["resized"],
+				"original_scale_factor": scale_factor_mm_per_pixel / resize_info["resize_factor"] if resize_info["resized"] else scale_factor_mm_per_pixel,
+				"final_scale_factor": scale_factor_mm_per_pixel
+			},
+			"memory_usage": {
+				"before_processing_mb": memory_before,
+				"after_processing_mb": memory_after,
+				"memory_increase_mb": memory_after - memory_before
+			},
 			"total_walls": len(wall_parameters),
 			"total_doors": len(detailed_doors),
 			"total_windows": len(detailed_windows),
@@ -892,14 +1106,21 @@ def visualize_wall_analysis():
 		})
 		
 	except Exception as e:
-		traceback.print_exc() 
+		logger.error(f"Error in wall visualization: {str(e)}")
+		logger.error(traceback.format_exc())
 		return jsonify({"error": str(e)}), 500
 
 
 
 
 if __name__ == '__main__':
-	application.debug = True
-	print('===========before running==========')
-	application.run(host='0.0.0.0', port=8080)
-	print('===========after running==========')
+	api_config = app_config.get_api_config()
+	logger.info('===========Starting FloorPlanTo3D API==========')
+	logger.info(f"Running on {api_config['HOST']}:{api_config['PORT']}")
+	logger.info(f"Debug mode: {api_config['DEBUG']}")
+	application.run(
+		host=api_config['HOST'], 
+		port=api_config['PORT'],
+		debug=api_config['DEBUG']
+	)
+	logger.info('===========API stopped==========')

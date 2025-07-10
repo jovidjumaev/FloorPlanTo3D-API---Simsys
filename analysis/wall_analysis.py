@@ -25,9 +25,9 @@ def calculate_wall_thickness(wall_mask, centerline_coords):
 		return {"average": 0, "min": 0, "max": 0, "profile": []}
 	
 	return {
-		"average": float(numpy.mean(thickness_values)),
-		"min": float(numpy.min(thickness_values)),
-		"max": float(numpy.max(thickness_values)),
+		"average": float(np.mean(thickness_values)),
+		"min": float(np.min(thickness_values)),
+		"max": float(np.max(thickness_values)),
 		"profile": thickness_values
 	}
 
@@ -78,7 +78,7 @@ def calculate_wall_orientation(centerline_coords):
 	dy = end_point[1] - start_point[1]
 	
 	# Calculate angle in degrees
-	angle = numpy.arctan2(dy, dx) * 180 / numpy.pi
+	angle = np.arctan2(dy, dx) * 180 / np.pi
 	
 	# Normalize to 0-180 degrees (walls don't have direction)
 	if angle < 0:
@@ -165,8 +165,8 @@ def extract_wall_parameters(segments, wall_mask, junctions, scale_factor_mm_per_
         thickness_px = calculate_wall_thickness(wall_mask, centerline)
         orientation = calculate_wall_orientation(centerline)
         if len(segment) > 0:
-            min_y, min_x = numpy.min(segment, axis=0)
-            max_y, max_x = numpy.max(segment, axis=0)
+            min_y, min_x = np.min(segment, axis=0)
+            max_y, max_x = np.max(segment, axis=0)
             bbox_px = {
                 "x1": float(min_x), "y1": float(min_y),
                 "x2": float(max_x), "y2": float(max_y)
@@ -201,8 +201,8 @@ def extract_wall_parameters_with_regions(all_wall_segments, wall_mask, junctions
         thickness_px = calculate_wall_thickness(wall_mask, centerline)
         orientation = calculate_wall_orientation(centerline)
         if len(segment) > 0:
-            min_y, min_x = numpy.min(segment, axis=0)
-            max_y, max_x = numpy.max(segment, axis=0)
+            min_y, min_x = np.min(segment, axis=0)
+            max_y, max_x = np.max(segment, axis=0)
             bbox_px = {
                 "x1": float(min_x), "y1": float(min_y),
                 "x2": float(max_x), "y2": float(max_y)
@@ -238,7 +238,7 @@ def generate_wall_insights(wall_parameters, junction_analysis):
 	# Analyze wall thickness consistency
 	thicknesses = [w["thickness"]["average"] for w in wall_parameters if w["thickness"]["average"] > 0]
 	if thicknesses:
-		thickness_std = numpy.std(thicknesses)
+		thickness_std = np.std(thicknesses)
 		if thickness_std < 2.0:
 			insights.append("Consistent wall thickness throughout floor plan")
 		else:
@@ -247,7 +247,7 @@ def generate_wall_insights(wall_parameters, junction_analysis):
 	# Analyze wall length distribution
 	lengths = [w["length_px"] for w in wall_parameters]
 	if lengths:
-		long_walls = len([l for l in lengths if l > numpy.mean(lengths) * 1.5])
+		long_walls = len([l for l in lengths if l > np.mean(lengths) * 1.5])
 		if long_walls > 0:
 			insights.append(f"Found {long_walls} notably long walls - potential load-bearing structures")
 	
@@ -412,15 +412,15 @@ def calculate_centered_straight_centerline(wall_mask, bbox=None):
     Returns:
         List of [x, y] coordinates for the centerline
     """
-    if numpy.sum(wall_mask) < 10:
+    if np.sum(wall_mask) < 10:
         return []
     
     # Calculate distance transform to find medial axis
     distance_map = distance_transform_edt(wall_mask)
     
     # Find the ridge (medial axis) points with high distance values
-    threshold = numpy.percentile(distance_map[distance_map > 0], 70)  # Top 30% of distances
-    ridge_points = numpy.where(distance_map >= threshold)
+    threshold = np.percentile(distance_map[distance_map > 0], 70)  # Top 30% of distances
+    ridge_points = np.where(distance_map >= threshold)
     
     if len(ridge_points[0]) < 2:
         return []
@@ -436,9 +436,9 @@ def calculate_centered_straight_centerline(wall_mask, bbox=None):
         is_horizontal = width > height
     else:
         # Calculate orientation from ridge points
-        ridge_array = numpy.array(ridge_coords)
-        x_range = numpy.max(ridge_array[:, 0]) - numpy.min(ridge_array[:, 0])
-        y_range = numpy.max(ridge_array[:, 1]) - numpy.min(ridge_array[:, 1])
+        ridge_array = np.array(ridge_coords)
+        x_range = np.max(ridge_array[:, 0]) - np.min(ridge_array[:, 0])
+        y_range = np.max(ridge_array[:, 1]) - np.min(ridge_array[:, 1])
         is_horizontal = x_range > y_range
     
     # Sort ridge points along the primary direction
@@ -450,7 +450,7 @@ def calculate_centered_straight_centerline(wall_mask, bbox=None):
     # Create a straight centerline by fitting a line through the ridge points
     if len(ridge_coords) >= 2:
         # Use robust line fitting
-        points = numpy.array(ridge_coords)
+        points = np.array(ridge_coords)
         
         # For horizontal walls, fit y = mx + b
         # For vertical walls, fit x = my + b
@@ -461,35 +461,35 @@ def calculate_centered_straight_centerline(wall_mask, bbox=None):
             # Find the line that best fits through the center
             if len(x_coords) > 1:
                 # Use weighted average of y-coordinates for each x region
-                x_min, x_max = numpy.min(x_coords), numpy.max(x_coords)
+                x_min, x_max = np.min(x_coords), np.max(x_coords)
                 
                 # Create evenly spaced points along the line
                 num_points = min(max(3, int((x_max - x_min) / 10)), 20)
-                straight_x = numpy.linspace(x_min, x_max, num_points)
+                straight_x = np.linspace(x_min, x_max, num_points)
                 
                 # For each x position, find the average y position of nearby ridge points
                 straight_y = []
                 for x in straight_x:
                     # Find ridge points within a small window around this x
                     window = 15  # pixels
-                    nearby_y = y_coords[numpy.abs(x_coords - x) <= window]
+                    nearby_y = y_coords[np.abs(x_coords - x) <= window]
                     if len(nearby_y) > 0:
                         # Use weighted average, giving more weight to points with higher distance values
-                        nearby_x = x_coords[numpy.abs(x_coords - x) <= window]
+                        nearby_x = x_coords[np.abs(x_coords - x) <= window]
                         nearby_points = [(int(nx), int(ny)) for nx, ny in zip(nearby_x, nearby_y)]
                         weights = [distance_map[py, px] for px, py in nearby_points if 0 <= py < distance_map.shape[0] and 0 <= px < distance_map.shape[1]]
                         
                         if weights:
-                            weighted_y = numpy.average(nearby_y, weights=weights)
+                            weighted_y = np.average(nearby_y, weights=weights)
                         else:
-                            weighted_y = numpy.mean(nearby_y)
+                            weighted_y = np.mean(nearby_y)
                         straight_y.append(weighted_y)
                     else:
                         # Interpolate from previous points
                         if len(straight_y) > 0:
                             straight_y.append(straight_y[-1])
                         else:
-                            straight_y.append(numpy.mean(y_coords))
+                            straight_y.append(np.mean(y_coords))
                 
                 centerline = [[x, y] for x, y in zip(straight_x, straight_y)]
         else:
@@ -498,34 +498,34 @@ def calculate_centered_straight_centerline(wall_mask, bbox=None):
             y_coords = points[:, 1]
             
             if len(y_coords) > 1:
-                y_min, y_max = numpy.min(y_coords), numpy.max(y_coords)
+                y_min, y_max = np.min(y_coords), np.max(y_coords)
                 
                 # Create evenly spaced points along the line
                 num_points = min(max(3, int((y_max - y_min) / 10)), 20)
-                straight_y = numpy.linspace(y_min, y_max, num_points)
+                straight_y = np.linspace(y_min, y_max, num_points)
                 
                 # For each y position, find the average x position of nearby ridge points
                 straight_x = []
                 for y in straight_y:
                     window = 15  # pixels
-                    nearby_x = x_coords[numpy.abs(y_coords - y) <= window]
+                    nearby_x = x_coords[np.abs(y_coords - y) <= window]
                     if len(nearby_x) > 0:
                         # Use weighted average
-                        nearby_y = y_coords[numpy.abs(y_coords - y) <= window]
+                        nearby_y = y_coords[np.abs(y_coords - y) <= window]
                         nearby_points = [(int(nx), int(ny)) for nx, ny in zip(nearby_x, nearby_y)]
                         weights = [distance_map[py, px] for px, py in nearby_points if 0 <= py < distance_map.shape[0] and 0 <= px < distance_map.shape[1]]
                         
                         if weights:
-                            weighted_x = numpy.average(nearby_x, weights=weights)
+                            weighted_x = np.average(nearby_x, weights=weights)
                         else:
-                            weighted_x = numpy.mean(nearby_x)
+                            weighted_x = np.mean(nearby_x)
                         straight_x.append(weighted_x)
                     else:
                         # Interpolate from previous points
                         if len(straight_x) > 0:
                             straight_x.append(straight_x[-1])
                         else:
-                            straight_x.append(numpy.mean(x_coords))
+                            straight_x.append(np.mean(x_coords))
                 
                 centerline = [[x, y] for x, y in zip(straight_x, straight_y)]
     
