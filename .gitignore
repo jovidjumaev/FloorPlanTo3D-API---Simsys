@@ -158,7 +158,8 @@ outputs/
 *.bmp
 *.tiff
 *.svg
-images/
+# Allow images folder for testing
+# images/
 weights/
 *.h5
 *.pth

@@ -1,0 +1,3 @@
+# This file ensures the weights folder is tracked in git
+# Users should download the model weights file (maskrcnn_15_epochs.h5) 
+# from the original repository and place it in this folder 
