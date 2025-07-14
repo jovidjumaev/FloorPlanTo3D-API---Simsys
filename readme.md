@@ -1,5 +1,7 @@
 # FloorPlanTo3D API with Wall Analysis
 
+![Demo Image](images/demo1.png)
+
 ## Credits
 
 This project is based on the original [FloorPlanTo3D-API](https://github.com/fadyazizz/FloorPlanTo3D-API) by Fady Aziz Ibrahim. We extended the original floor plan detection system with comprehensive architectural analysis capabilities and a modular, production-ready codebase.
